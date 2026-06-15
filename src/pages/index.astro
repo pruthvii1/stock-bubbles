@@ -3,91 +3,443 @@ import Layout from '../layouts/Layout.astro';
 ---
 
 <Layout>
-	<main class="shell">
-		<header class="head">
-			<div class="title">
-				<h1>NIFTY 50</h1>
-				<span class="sub">Live market heat</span>
+	<div class="stage">
+		<canvas id="scene"></canvas>
+
+		<header class="hud">
+			<div class="brand">
+				<h1>NIFTY&nbsp;50</h1>
+				<span class="tag">Live bubbles · size = |%Δ|</span>
 			</div>
+
+			<div class="metrics">
+				<div class="metric up">
+					<span class="label">Advancing</span>
+					<strong id="advCount">--</strong>
+				</div>
+				<div class="metric down">
+					<span class="label">Declining</span>
+					<strong id="decCount">--</strong>
+				</div>
+				<div class="metric">
+					<span class="label">Updated</span>
+					<strong id="updatedAt" class="muted">--</strong>
+				</div>
+			</div>
+
 			<div class="status" data-status="connecting">
 				<span class="dot"></span>
 				<span id="statusText">Connecting</span>
 			</div>
 		</header>
 
-		<section class="breadth" aria-label="Market breadth">
-			<div class="stat up">
-				<span class="k">Advancing</span>
-				<strong id="advCount">--</strong>
-			</div>
-			<div class="bar" aria-hidden="true">
-				<span id="advBar" class="bar-up"></span>
-			</div>
-			<div class="stat down">
-				<span class="k">Declining</span>
-				<strong id="decCount">--</strong>
-			</div>
-		</section>
+		<div id="warningText" class="warning" hidden></div>
 
-		<section class="toolbar">
-			<div class="seg" role="group" aria-label="Sort">
-				<button type="button" class="active" data-sort="pchange">Change</button>
-				<button type="button" data-sort="lastPrice">Price</button>
-				<button type="button" data-sort="tradedValue">Value</button>
-			</div>
-			<input id="filter" type="search" placeholder="Filter symbol" autocomplete="off" />
-			<span class="meta">Updated <span id="updatedAt">--</span></span>
-			<span id="warningText" class="warn" hidden></span>
-		</section>
-
-		<section class="list" aria-live="polite">
-			<div id="rows" class="rows">
-				<div class="empty">Waiting for the first snapshot…</div>
-			</div>
-		</section>
-	</main>
+		<div id="tooltip" class="tooltip" hidden></div>
+	</div>
 </Layout>
 
 <script>
-	const rowsEl = document.querySelector('#rows');
-	const statusEl = document.querySelector('.status');
-	const statusTextEl = document.querySelector('#statusText');
-	const updatedAtEl = document.querySelector('#updatedAt');
-	const warningTextEl = document.querySelector('#warningText');
-	const advCountEl = document.querySelector('#advCount');
-	const decCountEl = document.querySelector('#decCount');
-	const advBarEl = document.querySelector('#advBar');
-	const filterEl = document.querySelector('#filter');
-	const sortButtons = [...document.querySelectorAll('[data-sort]')];
-
-	const NAMES = {
-		TRENT: 'Trent', HDFCLIFE: 'HDFC Life', SHRIRAMFIN: 'Shriram Finance',
-		EICHERMOT: 'Eicher Motors', INDIGO: 'IndiGo', BAJAJFINSV: 'Bajaj Finserv',
-		SBILIFE: 'SBI Life', MARUTI: 'Maruti Suzuki', ULTRACEMCO: 'UltraTech Cement',
-		ETERNAL: 'Eternal', 'M&M': 'Mahindra & Mahindra', LT: 'Larsen & Toubro',
-		BAJFINANCE: 'Bajaj Finance', TITAN: 'Titan', GRASIM: 'Grasim',
-		MAXHEALTH: 'Max Healthcare', INFY: 'Infosys', TMPV: 'Tata Motors Passenger Vehicles',
-		NTPC: 'NTPC', JIOFIN: 'Jio Financial Services', 'BAJAJ-AUTO': 'Bajaj Auto',
-		HCLTECH: 'HCL Technologies', BHARTIARTL: 'Bharti Airtel', ONGC: 'ONGC',
-		ITC: 'ITC', RELIANCE: 'Reliance Industries', ICICIBANK: 'ICICI Bank',
-		COALINDIA: 'Coal India', HINDALCO: 'Hindalco', BEL: 'Bharat Electronics',
-		AXISBANK: 'Axis Bank', HDFCBANK: 'HDFC Bank', ASIANPAINT: 'Asian Paints',
-		HINDUNILVR: 'Hindustan Unilever', ADANIENT: 'Adani Enterprises', WIPRO: 'Wipro',
-		CIPLA: 'Cipla', KOTAKBANK: 'Kotak Mahindra Bank', SBIN: 'State Bank of India',
-		DRREDDY: "Dr. Reddy's Laboratories", POWERGRID: 'Power Grid', ADANIPORTS: 'Adani Ports',
-		SUNPHARMA: 'Sun Pharma', TATASTEEL: 'Tata Steel', TECHM: 'Tech Mahindra',
-		TATACONSUM: 'Tata Consumer Products', APOLLOHOSP: 'Apollo Hospitals',
-		TCS: 'Tata Consultancy Services', NESTLEIND: 'Nestle India', JSWSTEEL: 'JSW Steel',
+	type StockRow = {
+		symbol: string;
+		lastPrice: number;
+		change: number;
+		pchange: number;
+		tradedVolume: number;
+		tradedValue: number;
+		high: number;
+		low: number;
 	};
 
-	let stocks = [];
-	let sortKey = 'pchange';
-	let reconnectTimer;
+	class Bubble {
+		x = 0;
+		y = 0;
+		vx = 0;
+		vy = 0;
+		radius = MIN_R;
+		targetRadius = MIN_R;
+		flash = 0; // 0..1 pulse when price changes
+		grabbed = false;
 
-	const price = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
-	const compact = new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 2 });
+		constructor(
+			public symbol: string,
+			public pchange: number,
+			public lastPrice: number,
+			public change: number,
+		) {}
 
-	function setStatus(status, text) {
+		get mass() {
+			return this.radius * this.radius;
+		}
+	}
+
+	const NAMES: Record<string, string> = {
+		TRENT: 'Trent', HDFCLIFE: 'HDFC Life', SHRIRAMFIN: 'Shriram Fin',
+		EICHERMOT: 'Eicher', INDIGO: 'IndiGo', BAJAJFINSV: 'Bajaj Finserv',
+		SBILIFE: 'SBI Life', MARUTI: 'Maruti', ULTRACEMCO: 'UltraTech',
+		ETERNAL: 'Eternal', 'M&M': 'M&M', LT: 'L&T',
+		BAJFINANCE: 'Bajaj Fin', TITAN: 'Titan', GRASIM: 'Grasim',
+		MAXHEALTH: 'Max Health', INFY: 'Infosys', TMPV: 'Tata Motors PV',
+		NTPC: 'NTPC', JIOFIN: 'Jio Fin', 'BAJAJ-AUTO': 'Bajaj Auto',
+		HCLTECH: 'HCL Tech', BHARTIARTL: 'Airtel', ONGC: 'ONGC',
+		ITC: 'ITC', RELIANCE: 'Reliance', ICICIBANK: 'ICICI Bank',
+		COALINDIA: 'Coal India', HINDALCO: 'Hindalco', BEL: 'BEL',
+		AXISBANK: 'Axis Bank', HDFCBANK: 'HDFC Bank', ASIANPAINT: 'Asian Paints',
+		HINDUNILVR: 'HUL', ADANIENT: 'Adani Ent', WIPRO: 'Wipro',
+		CIPLA: 'Cipla', KOTAKBANK: 'Kotak', SBIN: 'SBI',
+		DRREDDY: "Dr Reddy's", POWERGRID: 'Power Grid', ADANIPORTS: 'Adani Ports',
+		SUNPHARMA: 'Sun Pharma', TATASTEEL: 'Tata Steel', TECHM: 'Tech Mahindra',
+		TATACONSUM: 'Tata Consumer', APOLLOHOSP: 'Apollo', TCS: 'TCS',
+		NESTLEIND: 'Nestle', JSWSTEEL: 'JSW Steel',
+	};
+
+	// ---- config --------------------------------------------------------------
+	const MIN_R = 20;
+	const MAX_R = 86;
+	const PCT_CAP = 5; // |%change| mapped to the biggest bubble
+	const WANDER = 6; // gentle random drift acceleration
+	const MAX_SPEED = 90; // px/s cap for ambient motion
+	const RESTITUTION = 0.55;
+	// drag is a spring toward the cursor; bigger bubbles = softer spring = more lag
+	const FOLLOW_STIFF_SMALL = 130;
+	const FOLLOW_STIFF_BIG = 34;
+	const FOLLOW_DAMP = 0.78;
+
+	const canvas = document.getElementById('scene') as HTMLCanvasElement;
+	const ctx = canvas.getContext('2d')!;
+	const statusEl = document.querySelector('.status') as HTMLElement;
+	const statusTextEl = document.getElementById('statusText')!;
+	const updatedAtEl = document.getElementById('updatedAt')!;
+	const advCountEl = document.getElementById('advCount')!;
+	const decCountEl = document.getElementById('decCount')!;
+	const warningEl = document.getElementById('warningText') as HTMLElement;
+	const tooltipEl = document.getElementById('tooltip') as HTMLElement;
+
+	let width = 0;
+	let height = 0;
+	let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+	const timeFmt = new Intl.DateTimeFormat('en-IN', {
+		hour: '2-digit', minute: '2-digit', second: '2-digit',
+	});
+	const priceFmt = new Intl.NumberFormat('en-IN', {
+		maximumFractionDigits: 2, minimumFractionDigits: 2,
+	});
+
+	const bubbles: Bubble[] = [];
+	const bySymbol = new Map<string, Bubble>();
+
+	function radiusFor(pchange: number): number {
+		const t = Math.min(Math.abs(pchange) / PCT_CAP, 1);
+		return MIN_R + Math.sqrt(t) * (MAX_R - MIN_R);
+	}
+
+	function resize() {
+		const stage = document.querySelector('.stage') as HTMLElement;
+		width = stage.clientWidth;
+		height = stage.clientHeight;
+		dpr = Math.min(window.devicePixelRatio || 1, 2);
+		canvas.width = Math.floor(width * dpr);
+		canvas.height = Math.floor(height * dpr);
+		canvas.style.width = `${width}px`;
+		canvas.style.height = `${height}px`;
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		// pull any stragglers back inside the new bounds
+		for (const b of bubbles) {
+			b.x = Math.min(Math.max(b.x, b.radius), width - b.radius);
+			b.y = Math.min(Math.max(b.y, b.radius), height - b.radius);
+		}
+	}
+
+	// ---- data sync -----------------------------------------------------------
+	function upsert(stock: StockRow) {
+		const targetRadius = radiusFor(stock.pchange);
+		const existing = bySymbol.get(stock.symbol);
+
+		if (existing) {
+			existing.targetRadius = targetRadius;
+			if (existing.lastPrice !== stock.lastPrice) existing.flash = 1;
+			existing.pchange = stock.pchange;
+			existing.lastPrice = stock.lastPrice;
+			existing.change = stock.change;
+			return;
+		}
+
+		const b = new Bubble(stock.symbol, stock.pchange, stock.lastPrice, stock.change);
+		// scatter new bubbles across the whole grid
+		b.x = MIN_R + Math.random() * Math.max(1, width - MIN_R * 2);
+		b.y = MIN_R + Math.random() * Math.max(1, height - MIN_R * 2);
+		b.radius = MIN_R * 0.5;
+		b.targetRadius = targetRadius;
+		const a = Math.random() * Math.PI * 2;
+		b.vx = Math.cos(a) * 30;
+		b.vy = Math.sin(a) * 30;
+		bubbles.push(b);
+		bySymbol.set(stock.symbol, b);
+	}
+
+	function applyData(stocks: StockRow[]) {
+		const seen = new Set<string>();
+		for (const s of stocks) {
+			seen.add(s.symbol);
+			upsert(s);
+		}
+		for (const [sym, b] of bySymbol) {
+			if (!seen.has(sym)) {
+				bySymbol.delete(sym);
+				const i = bubbles.indexOf(b);
+				if (i >= 0) bubbles.splice(i, 1);
+			}
+		}
+		const adv = stocks.filter((s) => s.pchange > 0).length;
+		const dec = stocks.filter((s) => s.pchange < 0).length;
+		advCountEl.textContent = String(adv);
+		decCountEl.textContent = String(dec);
+	}
+
+	// ---- physics -------------------------------------------------------------
+	function followStiffness(r: number): number {
+		const t = Math.min(Math.max((r - MIN_R) / (MAX_R - MIN_R), 0), 1);
+		return FOLLOW_STIFF_SMALL + (FOLLOW_STIFF_BIG - FOLLOW_STIFF_SMALL) * t;
+	}
+
+	function step(dt: number) {
+		for (const b of bubbles) {
+			// ease radius toward target
+			const dr = b.targetRadius - b.radius;
+			if (Math.abs(dr) > 0.1) b.radius += dr * Math.min(1, dt * 4);
+
+			if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 1.2);
+
+			if (b.grabbed) {
+				// spring the bubble toward the cursor instead of snapping to it,
+				// so it trails behind — heavier (bigger) bubbles lag more
+				const tx = Math.min(Math.max(pointerX + grabDX, b.radius), width - b.radius);
+				const ty = Math.min(Math.max(pointerY + grabDY, b.radius), height - b.radius);
+				const k = followStiffness(b.radius);
+				b.vx += (tx - b.x) * k * dt;
+				b.vy += (ty - b.y) * k * dt;
+				b.vx *= FOLLOW_DAMP;
+				b.vy *= FOLLOW_DAMP;
+			} else {
+				// random gentle drift keeps them alive and floating
+				b.vx += (Math.random() - 0.5) * WANDER;
+				b.vy += (Math.random() - 0.5) * WANDER;
+				// light damping so motion stays calm
+				b.vx *= 0.992;
+				b.vy *= 0.992;
+				const sp = Math.hypot(b.vx, b.vy);
+				if (sp > MAX_SPEED) {
+					b.vx = (b.vx / sp) * MAX_SPEED;
+					b.vy = (b.vy / sp) * MAX_SPEED;
+				}
+			}
+
+			b.x += b.vx * dt;
+			b.y += b.vy * dt;
+		}
+
+		// resolve collisions (a few iterations for stability)
+		for (let iter = 0; iter < 4; iter++) {
+			for (let i = 0; i < bubbles.length; i++) {
+				const a = bubbles[i];
+				for (let j = i + 1; j < bubbles.length; j++) {
+					collide(a, bubbles[j]);
+				}
+			}
+		}
+
+		// keep everyone inside the walls
+		for (const b of bubbles) {
+			if (b.x < b.radius) { b.x = b.radius; b.vx = Math.abs(b.vx) * RESTITUTION; }
+			else if (b.x > width - b.radius) { b.x = width - b.radius; b.vx = -Math.abs(b.vx) * RESTITUTION; }
+			if (b.y < b.radius) { b.y = b.radius; b.vy = Math.abs(b.vy) * RESTITUTION; }
+			else if (b.y > height - b.radius) { b.y = height - b.radius; b.vy = -Math.abs(b.vy) * RESTITUTION; }
+		}
+	}
+
+	function collide(a: Bubble, b: Bubble) {
+		let dx = b.x - a.x;
+		let dy = b.y - a.y;
+		let dist = Math.hypot(dx, dy);
+		const min = a.radius + b.radius;
+		if (dist >= min) return;
+
+		if (dist === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; dist = 0.01; }
+		const nx = dx / dist;
+		const ny = dy / dist;
+		const overlap = min - dist;
+
+		// finite inverse masses: a small bubble simply can't shove a big one far
+		const ima = 1 / a.mass;
+		const imb = 1 / b.mass;
+		const imSum = ima + imb;
+
+		// positional separation
+		a.x -= nx * overlap * (ima / imSum);
+		a.y -= ny * overlap * (ima / imSum);
+		b.x += nx * overlap * (imb / imSum);
+		b.y += ny * overlap * (imb / imSum);
+
+		// velocity impulse (only if approaching)
+		const rvx = b.vx - a.vx;
+		const rvy = b.vy - a.vy;
+		const vn = rvx * nx + rvy * ny;
+		if (vn > 0) return;
+		const jImp = (-(1 + RESTITUTION) * vn) / imSum;
+		a.vx -= jImp * nx * ima;
+		a.vy -= jImp * ny * ima;
+		b.vx += jImp * nx * imb;
+		b.vy += jImp * ny * imb;
+	}
+
+	// ---- pointer / drag ------------------------------------------------------
+	let grabbed: Bubble | null = null;
+	let grabDX = 0;
+	let grabDY = 0;
+	let pointerX = 0;
+	let pointerY = 0;
+
+	function pointerPos(e: PointerEvent) {
+		const rect = canvas.getBoundingClientRect();
+		return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+	}
+
+	function bubbleAt(x: number, y: number): Bubble | null {
+		// topmost (largest) first
+		for (let i = bubbles.length - 1; i >= 0; i--) {
+			const b = bubbles[i];
+			if (Math.hypot(b.x - x, b.y - y) <= b.radius) return b;
+		}
+		return null;
+	}
+
+	canvas.addEventListener('pointerdown', (e) => {
+		const { x, y } = pointerPos(e);
+		const hit = bubbleAt(x, y);
+		if (!hit) return;
+		grabbed = hit;
+		hit.grabbed = true;
+		grabDX = hit.x - x;
+		grabDY = hit.y - y;
+		pointerX = x;
+		pointerY = y;
+		canvas.setPointerCapture(e.pointerId);
+		canvas.style.cursor = 'grabbing';
+	});
+
+	canvas.addEventListener('pointermove', (e) => {
+		const { x, y } = pointerPos(e);
+		pointerX = x;
+		pointerY = y;
+		updateHover(e.clientX, e.clientY);
+	});
+
+	function endDrag(e: PointerEvent) {
+		if (!grabbed) return;
+		// velocity is already physical from the follow spring, so just let go
+		grabbed.grabbed = false;
+		grabbed = null;
+		canvas.style.cursor = 'grab';
+		try { canvas.releasePointerCapture(e.pointerId); } catch {}
+	}
+	canvas.addEventListener('pointerup', endDrag);
+	canvas.addEventListener('pointercancel', endDrag);
+
+	function updateHover(clientX: number, clientY: number) {
+		const rect = canvas.getBoundingClientRect();
+		const hit = bubbleAt(clientX - rect.left, clientY - rect.top);
+		if (hit) {
+			const sign = hit.change >= 0 ? '+' : '';
+			tooltipEl.innerHTML =
+				`<strong>${escapeHtml(NAMES[hit.symbol] || hit.symbol)}</strong>` +
+				`<span>₹${priceFmt.format(hit.lastPrice)}</span>` +
+				`<span class="${hit.pchange >= 0 ? 'pos' : 'neg'}">` +
+				`${sign}${priceFmt.format(hit.change)} (${sign}${hit.pchange.toFixed(2)}%)</span>`;
+			tooltipEl.hidden = false;
+			tooltipEl.style.left = `${clientX}px`;
+			tooltipEl.style.top = `${clientY}px`;
+			if (!grabbed) canvas.style.cursor = 'grab';
+		} else {
+			tooltipEl.hidden = true;
+			if (!grabbed) canvas.style.cursor = 'default';
+		}
+	}
+	canvas.addEventListener('pointerleave', () => { tooltipEl.hidden = true; });
+
+	// ---- rendering -----------------------------------------------------------
+	// muted, slightly desaturated tones so colour reads as a hint, not a slab
+	function tint(pchange: number, alpha: number): string {
+		if (pchange >= 0) return `hsla(150, 46%, 52%, ${alpha})`;
+		return `hsla(5, 62%, 56%, ${alpha})`;
+	}
+
+	function drawBubble(b: Bubble) {
+		const { x, y, radius: r } = b;
+		const up = b.pchange >= 0;
+		const t = Math.min(Math.abs(b.pchange) / PCT_CAP, 1);
+
+		// flat disc: nearly clear in the middle, colour gathers gently toward the
+		// rim — no offset highlight, so it reads as a flat token, not a sphere
+		const grad = ctx.createRadialGradient(x, y, r * 0.35, x, y, r);
+		grad.addColorStop(0, tint(b.pchange, 0.03 + t * 0.04));
+		grad.addColorStop(0.78, tint(b.pchange, 0.06 + t * 0.07));
+		grad.addColorStop(1, tint(b.pchange, 0.16 + t * 0.16));
+		ctx.beginPath();
+		ctx.arc(x, y, r, 0, Math.PI * 2);
+		ctx.fillStyle = grad;
+		ctx.fill();
+
+		// the ring carries the signal — soft glow on bigger movers
+		ctx.save();
+		ctx.beginPath();
+		ctx.arc(x, y, r - 1, 0, Math.PI * 2);
+		ctx.lineWidth = 1.25 + t * 1.5;
+		ctx.strokeStyle = tint(b.pchange, 0.4 + t * 0.45);
+		ctx.shadowColor = tint(b.pchange, 0.5);
+		ctx.shadowBlur = (4 + t * 12) * (b.flash * 0.6 + 1);
+		ctx.stroke();
+		ctx.restore();
+
+		if (r >= 24) {
+			const label = NAMES[b.symbol] || b.symbol;
+			const sign = up ? '+' : '';
+			const symSize = Math.max(9, Math.min(r * 0.32, 15));
+			const pctSize = Math.max(9, Math.min(r * 0.3, 14));
+
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillStyle = 'rgba(244,247,251,0.94)';
+			ctx.font = `600 ${symSize}px Inter, system-ui, sans-serif`;
+			ctx.fillText(fit(label, r), x, y - pctSize * 0.6);
+
+			ctx.fillStyle = up ? 'rgba(120,210,170,0.92)' : 'rgba(228,150,158,0.92)';
+			ctx.font = `600 ${pctSize}px Inter, system-ui, sans-serif`;
+			ctx.fillText(`${sign}${b.pchange.toFixed(2)}%`, x, y + symSize * 0.7);
+		}
+	}
+
+	function fit(text: string, r: number): string {
+		const max = Math.floor(r / 4);
+		return text.length > max ? text.slice(0, Math.max(2, max - 1)) + '…' : text;
+	}
+
+	let last = performance.now();
+	function frame(now: number) {
+		let dt = (now - last) / 1000;
+		last = now;
+		if (dt > 0.05) dt = 0.05; // clamp big tab-switch gaps
+
+		step(dt);
+		ctx.clearRect(0, 0, width, height);
+		for (const b of bubbles) drawBubble(b);
+		requestAnimationFrame(frame);
+	}
+
+	// ---- websocket -----------------------------------------------------------
+	let reconnectTimer: number | undefined;
+
+	function setStatus(status: string, text: string) {
 		statusEl.dataset.status = status;
 		statusTextEl.textContent = text;
 	}
@@ -107,18 +459,16 @@ import Layout from '../layouts/Layout.astro';
 			if (message.type === 'error') {
 				setStatus('error', 'Offline');
 				updatedAtEl.textContent = formatTime(message.updatedAt);
-				warningTextEl.textContent = message.message;
-				warningTextEl.hidden = false;
+				warningEl.textContent = message.message;
+				warningEl.hidden = false;
 				return;
 			}
 
 			setStatus(message.stale ? 'stale' : 'connected', message.stale ? 'Stale' : 'Live');
-			warningTextEl.textContent = message.warning || '';
-			warningTextEl.hidden = !message.warning;
-			stocks = message.stocks;
+			warningEl.textContent = message.warning || '';
+			warningEl.hidden = !message.warning;
+			applyData(message.stocks as StockRow[]);
 			updatedAtEl.textContent = formatTime(message.updatedAt);
-			renderBreadth();
-			renderRows();
 		});
 
 		socket.addEventListener('close', () => {
@@ -129,115 +479,124 @@ import Layout from '../layouts/Layout.astro';
 		socket.addEventListener('error', () => socket.close());
 	}
 
-	function renderBreadth() {
-		const adv = stocks.filter((s) => s.pchange > 0).length;
-		const dec = stocks.filter((s) => s.pchange < 0).length;
-		advCountEl.textContent = String(adv);
-		decCountEl.textContent = String(dec);
-		const total = adv + dec || 1;
-		advBarEl.style.width = `${(adv / total) * 100}%`;
+	function formatTime(value: string): string {
+		return timeFmt.format(new Date(value));
 	}
 
-	function renderRows() {
-		const query = filterEl.value.trim().toUpperCase();
-		const visible = stocks
-			.filter((stock) => {
-				const name = (NAMES[stock.symbol] || '').toUpperCase();
-				return stock.symbol.includes(query) || name.includes(query);
-			})
-			.sort((a, b) => Math.abs(b[sortKey]) - Math.abs(a[sortKey]));
-
-		if (visible.length === 0) {
-			rowsEl.innerHTML = '<div class="empty">No symbols match this filter.</div>';
-			return;
-		}
-
-		rowsEl.innerHTML = visible
-			.map((stock) => {
-				const tone = stock.pchange >= 0 ? 'gain' : 'loss';
-				const intensity = Math.min(Math.abs(stock.pchange) / 4, 1);
-				const name = escapeHtml(NAMES[stock.symbol] || stock.symbol);
-				const sign = stock.pchange >= 0 ? '+' : '';
-
-				return `
-					<article class="row ${tone}" style="--i:${intensity.toFixed(3)}">
-						<span class="sym">${name}</span>
-						<span class="px">${price.format(stock.lastPrice)}</span>
-						<span class="pct">${sign}${stock.pchange.toFixed(2)}%</span>
-					</article>
-				`;
-			})
-			.join('');
+	function escapeHtml(value: string): string {
+		return value.replace(/[&<>"']/g, (c) =>
+			({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+		);
 	}
 
-	function formatTime(value) {
-		return new Intl.DateTimeFormat('en-IN', {
-			hour: '2-digit',
-			minute: '2-digit',
-			second: '2-digit',
-		}).format(new Date(value));
-	}
-
-	function escapeHtml(value) {
-		return value.replace(/[&<>"']/g, (char) => {
-			const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-			return entities[char];
-		});
-	}
-
-	sortButtons.forEach((button) => {
-		button.addEventListener('click', () => {
-			sortKey = button.dataset.sort;
-			sortButtons.forEach((item) => item.classList.toggle('active', item === button));
-			renderRows();
-		});
-	});
-
-	filterEl.addEventListener('input', renderRows);
+	// ---- boot ----------------------------------------------------------------
+	resize();
+	window.addEventListener('resize', resize);
+	requestAnimationFrame(frame);
 	connect();
 </script>
 
 <style>
-	.shell {
-		width: min(840px, calc(100% - 32px));
-		margin: 0 auto;
-		padding: 40px 0 64px;
+	.stage {
+		position: fixed;
+		inset: 0;
+		overflow: hidden;
+		background:
+			radial-gradient(120% 90% at 50% -10%, #121a2b 0%, #0a0e17 45%, #06080d 100%);
 	}
 
-	.head {
+	#scene {
+		position: absolute;
+		inset: 0;
+		display: block;
+		touch-action: none;
+	}
+
+	.hud {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		z-index: 5;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		margin-bottom: 28px;
+		gap: 24px;
+		padding: 14px 22px;
+		background: linear-gradient(180deg, rgba(6, 8, 13, 0.85) 0%, rgba(6, 8, 13, 0) 100%);
+		backdrop-filter: blur(6px);
+		-webkit-backdrop-filter: blur(6px);
+		pointer-events: none;
 	}
 
-	.title {
+	.brand {
 		display: flex;
-		align-items: baseline;
-		gap: 12px;
+		flex-direction: column;
+		gap: 2px;
 	}
 
-	h1 {
+	.brand h1 {
 		margin: 0;
-		font-size: 1.5rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		color: #0d1117;
+		font-size: 1.05rem;
+		font-weight: 800;
+		letter-spacing: 0.06em;
+		color: #f4f7fb;
 	}
 
-	.sub {
-		color: #8a93a0;
-		font-size: 0.85rem;
+	.tag {
+		font-size: 0.68rem;
+		font-weight: 500;
+		letter-spacing: 0.02em;
+		color: #7b8696;
+	}
+
+	.metrics {
+		display: flex;
+		align-items: center;
+		gap: 28px;
+		margin-left: 8px;
+	}
+
+	.metric {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+	}
+
+	.metric .label {
+		font-size: 0.62rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #6b7587;
+	}
+
+	.metric strong {
+		font-size: 1.15rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.1;
+	}
+
+	.metric.up strong { color: #34d77f; }
+	.metric.down strong { color: #ff5c6c; }
+	.metric .muted {
+		font-size: 0.92rem;
+		font-weight: 600;
+		color: #aeb8c6;
 	}
 
 	.status {
+		margin-left: auto;
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 0.82rem;
+		padding: 6px 12px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.07);
+		font-size: 0.74rem;
 		font-weight: 600;
-		color: #8a93a0;
+		color: #aeb8c6;
 	}
 
 	.dot {
@@ -245,241 +604,62 @@ import Layout from '../layouts/Layout.astro';
 		height: 8px;
 		border-radius: 50%;
 		background: #d6a015;
-		box-shadow: 0 0 0 0 rgba(214, 160, 21, 0.5);
 		animation: pulse 2s infinite;
 	}
 
-	.status[data-status='connected'] {
-		color: #137a3b;
-	}
-	.status[data-status='connected'] .dot {
-		background: #16a34a;
-		box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5);
-	}
-	.status[data-status='stale'] {
-		color: #9a6700;
-	}
-	.status[data-status='stale'] .dot {
-		background: #d6a015;
-	}
-	.status[data-status='error'] {
-		color: #c0283a;
-	}
-	.status[data-status='error'] .dot {
-		background: #dc2626;
-		animation: none;
-	}
+	.status[data-status='connected'] { color: #34d77f; }
+	.status[data-status='connected'] .dot { background: #34d77f; }
+	.status[data-status='stale'] { color: #e0b53a; }
+	.status[data-status='stale'] .dot { background: #e0b53a; }
+	.status[data-status='error'] { color: #ff5c6c; }
+	.status[data-status='error'] .dot { background: #ff5c6c; animation: none; }
 
 	@keyframes pulse {
 		0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
-		70% { box-shadow: 0 0 0 6px transparent; }
-		100% { box-shadow: 0 0 0 0 transparent; opacity: 0.7; }
+		70% { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }
+		100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
 	}
 
-	.breadth {
-		display: grid;
-		grid-template-columns: auto 1fr auto;
-		align-items: center;
-		gap: 16px;
-		margin-bottom: 28px;
+	.warning {
+		position: absolute;
+		bottom: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 5;
+		max-width: 90vw;
+		padding: 8px 16px;
+		border-radius: 999px;
+		background: rgba(224, 181, 58, 0.12);
+		border: 1px solid rgba(224, 181, 58, 0.3);
+		color: #e8c766;
+		font-size: 0.76rem;
+		text-align: center;
 	}
 
-	.stat {
+	.tooltip {
+		position: fixed;
+		z-index: 10;
+		transform: translate(-50%, calc(-100% - 16px));
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-	}
-
-	.stat.down {
-		text-align: right;
-	}
-
-	.stat .k {
-		font-size: 0.72rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: #8a93a0;
-	}
-
-	.stat strong {
-		font-size: 1.6rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stat.up strong { color: #16a34a; }
-	.stat.down strong { color: #dc2626; }
-
-	.bar {
-		height: 6px;
-		border-radius: 999px;
-		background: #dc2626;
-		overflow: hidden;
-	}
-
-	.bar-up {
-		display: block;
-		height: 100%;
-		width: 50%;
-		background: #16a34a;
-		border-radius: 999px;
-		transition: width 0.4s ease;
-	}
-
-	.toolbar {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		margin-bottom: 8px;
-	}
-
-	.seg {
-		display: inline-flex;
-		gap: 2px;
-		padding: 3px;
-		border-radius: 8px;
-		background: #eceef1;
-	}
-
-	button,
-	input {
-		font: inherit;
-	}
-
-	.seg button {
-		border: 0;
-		padding: 6px 12px;
-		border-radius: 6px;
-		background: transparent;
-		color: #5b6573;
-		font-size: 0.82rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-
-	.seg button.active {
-		background: #ffffff;
-		color: #0d1117;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-	}
-
-	#filter {
-		flex: 1;
-		min-width: 0;
-		max-width: 200px;
+		gap: 1px;
 		padding: 8px 12px;
-		border: 1px solid #e2e5ea;
-		border-radius: 8px;
-		background: #ffffff;
-		color: #0d1117;
-	}
-
-	#filter:focus {
-		outline: none;
-		border-color: #c4cad3;
-	}
-
-	.meta {
-		margin-left: auto;
-		color: #8a93a0;
-		font-size: 0.78rem;
-		font-variant-numeric: tabular-nums;
+		border-radius: 10px;
+		background: rgba(14, 18, 28, 0.95);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+		pointer-events: none;
 		white-space: nowrap;
 	}
 
-	.warn {
-		color: #9a6700;
-		font-size: 0.78rem;
-		white-space: nowrap;
-	}
+	.tooltip strong { font-size: 0.82rem; color: #f4f7fb; }
+	.tooltip span { font-size: 0.74rem; color: #aeb8c6; font-variant-numeric: tabular-nums; }
+	.tooltip .pos { color: #34d77f; }
+	.tooltip .neg { color: #ff5c6c; }
 
-	.list {
-		margin-top: 12px;
-	}
-
-	.rows {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.row {
-		display: grid;
-		grid-template-columns: 1fr 120px 92px;
-		align-items: center;
-		column-gap: 24px;
-		padding: 13px 16px;
-		border-radius: 8px;
-		border-bottom: 1px solid #eef0f3;
-		transition: background 0.12s ease;
-	}
-
-	.row:last-child {
-		border-bottom: 0;
-	}
-
-	.row:hover {
-		background: #f6f7f9;
-	}
-
-	.sym {
-		font-weight: 500;
-		font-size: 0.95rem;
-		color: #0d1117;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.px {
-		font-variant-numeric: tabular-nums;
-		font-weight: 500;
-		color: #3d4350;
-		text-align: right;
-	}
-
-	.pct {
-		justify-self: end;
-		min-width: 84px;
-		padding: 4px 0;
-		border-radius: 6px;
-		font-variant-numeric: tabular-nums;
-		font-weight: 600;
-		font-size: 0.9rem;
-		text-align: center;
-	}
-
-	.gain .pct {
-		color: #15803d;
-		background: rgba(22, 163, 74, calc(0.08 + var(--i) * 0.14));
-	}
-	.loss .pct {
-		color: #c0283a;
-		background: rgba(220, 38, 38, calc(0.08 + var(--i) * 0.14));
-	}
-
-	.empty {
-		padding: 56px 16px;
-		text-align: center;
-		color: #8a93a0;
-	}
-
-	@media (max-width: 560px) {
-		.toolbar {
-			flex-wrap: wrap;
-		}
-		.meta {
-			width: 100%;
-			margin-left: 0;
-		}
-		.warn {
-			width: 100%;
-			white-space: normal;
-		}
-		.row {
-			grid-template-columns: 1fr auto 84px;
-			column-gap: 14px;
-			padding: 12px;
-		}
+	@media (max-width: 640px) {
+		.hud { gap: 14px; padding: 12px 14px; flex-wrap: wrap; }
+		.metrics { gap: 16px; width: 100%; order: 3; }
+		.status { margin-left: auto; }
 	}
 </style>
