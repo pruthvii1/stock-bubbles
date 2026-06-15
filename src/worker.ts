@@ -8,6 +8,7 @@ const NSE_URL =
 const REFRESH_INTERVAL_MS = 10_000;
 const FETCH_TIMEOUT_MS = 8_000;
 const COOKIE_REFRESH_MS = 20 * 60_000;
+const BACKOFF_STEPS_MS = [10_000, 20_000, 40_000, 80_000, 160_000, 300_000];
 
 type StockRow = {
 	symbol: string;
@@ -23,6 +24,8 @@ type StockRow = {
 type StockSnapshot = {
 	type: 'snapshot';
 	updatedAt: string;
+	stale?: boolean;
+	warning?: string;
 	count: number;
 	stocks: StockRow[];
 };
@@ -44,6 +47,8 @@ export class StockTickerRoom {
 	private latest: StockMessage | null = null;
 	private cookieHeader = '';
 	private cookieRefreshedAt = 0;
+	private consecutiveFailures = 0;
+	private forceCookieRefresh = false;
 
 	constructor(
 		private readonly state: DurableObjectState,
@@ -76,7 +81,7 @@ export class StockTickerRoom {
 		await this.refreshAndBroadcast();
 
 		if (this.hasClients()) {
-			await this.scheduleNextTick(REFRESH_INTERVAL_MS);
+			await this.scheduleNextTick(this.getNextRefreshDelay());
 		}
 	}
 
@@ -115,32 +120,43 @@ export class StockTickerRoom {
 			const body = JSON.stringify(payload);
 
 			this.latest = payload;
+			this.consecutiveFailures = 0;
+			this.forceCookieRefresh = false;
 
 			if (body !== this.lastPayload) {
 				this.lastPayload = body;
 				this.broadcast(body);
 			}
 		} catch (error) {
-			const payload: StockError = {
-				type: 'error',
-				updatedAt: new Date().toISOString(),
-				message: error instanceof Error ? error.message : 'Unable to refresh stock data.',
-			};
+			this.consecutiveFailures += 1;
+			this.forceCookieRefresh = shouldRefreshCookies(error);
 
+			const message = error instanceof Error ? error.message : 'Unable to refresh stock data.';
+			const payload = this.getFailurePayload(message);
 			const body = JSON.stringify(payload);
+
 			this.latest = payload;
-			this.broadcast(body);
+
+			if (body !== this.lastPayload) {
+				this.lastPayload = body;
+				this.broadcast(body);
+			}
 		}
 	}
 
 	private async fetchNifty50(): Promise<StockSnapshot> {
-		if (!this.cookieHeader || Date.now() - this.cookieRefreshedAt > COOKIE_REFRESH_MS) {
+		if (
+			this.forceCookieRefresh ||
+			!this.cookieHeader ||
+			Date.now() - this.cookieRefreshedAt > COOKIE_REFRESH_MS
+		) {
 			await this.refreshNseCookies();
+			this.forceCookieRefresh = false;
 		}
 
 		let response = await fetchNseApi(this.cookieHeader);
 
-		if (response.status === 401 || response.status === 403) {
+		if (response.status === 401 || response.status === 403 || response.status === 520) {
 			await this.refreshNseCookies();
 			response = await fetchNseApi(this.cookieHeader);
 		}
@@ -165,6 +181,30 @@ export class StockTickerRoom {
 			count: stocks.length,
 			stocks,
 		};
+	}
+
+	private getFailurePayload(message: string): StockMessage {
+		if (this.latest?.type === 'snapshot') {
+			return {
+				...this.latest,
+				stale: true,
+				warning: message,
+			};
+		}
+
+		return {
+			type: 'error',
+			updatedAt: new Date().toISOString(),
+			message,
+		};
+	}
+
+	private getNextRefreshDelay(): number {
+		if (this.consecutiveFailures === 0) {
+			return REFRESH_INTERVAL_MS;
+		}
+
+		return BACKOFF_STEPS_MS[Math.min(this.consecutiveFailures - 1, BACKOFF_STEPS_MS.length - 1)];
 	}
 
 	private async refreshNseCookies(): Promise<void> {
@@ -240,6 +280,10 @@ function splitSetCookie(value: string | null): string[] {
 	}
 
 	return value.split(/,(?=\s*[^;,]+=)/);
+}
+
+function shouldRefreshCookies(error: unknown): boolean {
+	return error instanceof Error && /NSE returned (401|403|520)/.test(error.message);
 }
 
 function normalizeStock(value: unknown): StockRow | null {
