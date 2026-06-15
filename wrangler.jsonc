@@ -3,6 +3,7 @@
 	"compatibility_flags": ["global_fetch_strictly_public"],
 	"name": "stock-bubbles",
 	"main": "src/worker.ts",
+	"workers_dev": true,
 	"routes": [
 		{
 			"pattern": "pruthvii.com/stocks*",
