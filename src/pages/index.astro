@@ -1,11 +1,462 @@
 ---
-import Welcome from '../components/Welcome.astro';
 import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
 ---
 
 <Layout>
-	<Welcome />
+	<main class="shell">
+		<header class="head">
+			<div class="title">
+				<h1>NIFTY 50</h1>
+				<span class="sub">Live market heat</span>
+			</div>
+			<div class="status" data-status="connecting">
+				<span class="dot"></span>
+				<span id="statusText">Connecting</span>
+			</div>
+		</header>
+
+		<section class="breadth" aria-label="Market breadth">
+			<div class="stat up">
+				<span class="k">Advancing</span>
+				<strong id="advCount">--</strong>
+			</div>
+			<div class="bar" aria-hidden="true">
+				<span id="advBar" class="bar-up"></span>
+			</div>
+			<div class="stat down">
+				<span class="k">Declining</span>
+				<strong id="decCount">--</strong>
+			</div>
+		</section>
+
+		<section class="toolbar">
+			<div class="seg" role="group" aria-label="Sort">
+				<button type="button" class="active" data-sort="pchange">Change</button>
+				<button type="button" data-sort="lastPrice">Price</button>
+				<button type="button" data-sort="tradedValue">Value</button>
+			</div>
+			<input id="filter" type="search" placeholder="Filter symbol" autocomplete="off" />
+			<span class="meta">Updated <span id="updatedAt">--</span></span>
+		</section>
+
+		<section class="list" aria-live="polite">
+			<div id="rows" class="rows">
+				<div class="empty">Waiting for the first snapshot…</div>
+			</div>
+		</section>
+	</main>
 </Layout>
+
+<script>
+	const rowsEl = document.querySelector('#rows');
+	const statusEl = document.querySelector('.status');
+	const statusTextEl = document.querySelector('#statusText');
+	const updatedAtEl = document.querySelector('#updatedAt');
+	const advCountEl = document.querySelector('#advCount');
+	const decCountEl = document.querySelector('#decCount');
+	const advBarEl = document.querySelector('#advBar');
+	const filterEl = document.querySelector('#filter');
+	const sortButtons = [...document.querySelectorAll('[data-sort]')];
+
+	const NAMES = {
+		TRENT: 'Trent', HDFCLIFE: 'HDFC Life', SHRIRAMFIN: 'Shriram Finance',
+		EICHERMOT: 'Eicher Motors', INDIGO: 'IndiGo', BAJAJFINSV: 'Bajaj Finserv',
+		SBILIFE: 'SBI Life', MARUTI: 'Maruti Suzuki', ULTRACEMCO: 'UltraTech Cement',
+		ETERNAL: 'Eternal', 'M&M': 'Mahindra & Mahindra', LT: 'Larsen & Toubro',
+		BAJFINANCE: 'Bajaj Finance', TITAN: 'Titan', GRASIM: 'Grasim',
+		MAXHEALTH: 'Max Healthcare', INFY: 'Infosys', TMPV: 'Tata Motors Passenger Vehicles',
+		NTPC: 'NTPC', JIOFIN: 'Jio Financial Services', 'BAJAJ-AUTO': 'Bajaj Auto',
+		HCLTECH: 'HCL Technologies', BHARTIARTL: 'Bharti Airtel', ONGC: 'ONGC',
+		ITC: 'ITC', RELIANCE: 'Reliance Industries', ICICIBANK: 'ICICI Bank',
+		COALINDIA: 'Coal India', HINDALCO: 'Hindalco', BEL: 'Bharat Electronics',
+		AXISBANK: 'Axis Bank', HDFCBANK: 'HDFC Bank', ASIANPAINT: 'Asian Paints',
+		HINDUNILVR: 'Hindustan Unilever', ADANIENT: 'Adani Enterprises', WIPRO: 'Wipro',
+		CIPLA: 'Cipla', KOTAKBANK: 'Kotak Mahindra Bank', SBIN: 'State Bank of India',
+		DRREDDY: "Dr. Reddy's Laboratories", POWERGRID: 'Power Grid', ADANIPORTS: 'Adani Ports',
+		SUNPHARMA: 'Sun Pharma', TATASTEEL: 'Tata Steel', TECHM: 'Tech Mahindra',
+		TATACONSUM: 'Tata Consumer Products', APOLLOHOSP: 'Apollo Hospitals',
+		TCS: 'Tata Consultancy Services', NESTLEIND: 'Nestle India', JSWSTEEL: 'JSW Steel',
+	};
+
+	let stocks = [];
+	let sortKey = 'pchange';
+	let reconnectTimer;
+
+	const price = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+	const compact = new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 2 });
+
+	function setStatus(status, text) {
+		statusEl.dataset.status = status;
+		statusTextEl.textContent = text;
+	}
+
+	function connect() {
+		clearTimeout(reconnectTimer);
+		setStatus('connecting', 'Connecting');
+
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const socket = new WebSocket(`${protocol}//${window.location.host}/api/stocks/ws`);
+
+		socket.addEventListener('open', () => setStatus('connected', 'Live'));
+
+		socket.addEventListener('message', (event) => {
+			const message = JSON.parse(event.data);
+
+			if (message.type === 'error') {
+				setStatus('error', 'Offline');
+				updatedAtEl.textContent = formatTime(message.updatedAt);
+				return;
+			}
+
+			stocks = message.stocks;
+			updatedAtEl.textContent = formatTime(message.updatedAt);
+			renderBreadth();
+			renderRows();
+		});
+
+		socket.addEventListener('close', () => {
+			setStatus('connecting', 'Reconnecting');
+			reconnectTimer = window.setTimeout(connect, 1500);
+		});
+
+		socket.addEventListener('error', () => socket.close());
+	}
+
+	function renderBreadth() {
+		const adv = stocks.filter((s) => s.pchange > 0).length;
+		const dec = stocks.filter((s) => s.pchange < 0).length;
+		advCountEl.textContent = String(adv);
+		decCountEl.textContent = String(dec);
+		const total = adv + dec || 1;
+		advBarEl.style.width = `${(adv / total) * 100}%`;
+	}
+
+	function renderRows() {
+		const query = filterEl.value.trim().toUpperCase();
+		const visible = stocks
+			.filter((stock) => {
+				const name = (NAMES[stock.symbol] || '').toUpperCase();
+				return stock.symbol.includes(query) || name.includes(query);
+			})
+			.sort((a, b) => Math.abs(b[sortKey]) - Math.abs(a[sortKey]));
+
+		if (visible.length === 0) {
+			rowsEl.innerHTML = '<div class="empty">No symbols match this filter.</div>';
+			return;
+		}
+
+		rowsEl.innerHTML = visible
+			.map((stock) => {
+				const tone = stock.pchange >= 0 ? 'gain' : 'loss';
+				const intensity = Math.min(Math.abs(stock.pchange) / 4, 1);
+				const name = escapeHtml(NAMES[stock.symbol] || stock.symbol);
+				const sign = stock.pchange >= 0 ? '+' : '';
+
+				return `
+					<article class="row ${tone}" style="--i:${intensity.toFixed(3)}">
+						<span class="sym">${name}</span>
+						<span class="px">${price.format(stock.lastPrice)}</span>
+						<span class="pct">${sign}${stock.pchange.toFixed(2)}%</span>
+					</article>
+				`;
+			})
+			.join('');
+	}
+
+	function formatTime(value) {
+		return new Intl.DateTimeFormat('en-IN', {
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+		}).format(new Date(value));
+	}
+
+	function escapeHtml(value) {
+		return value.replace(/[&<>"']/g, (char) => {
+			const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+			return entities[char];
+		});
+	}
+
+	sortButtons.forEach((button) => {
+		button.addEventListener('click', () => {
+			sortKey = button.dataset.sort;
+			sortButtons.forEach((item) => item.classList.toggle('active', item === button));
+			renderRows();
+		});
+	});
+
+	filterEl.addEventListener('input', renderRows);
+	connect();
+</script>
+
+<style>
+	.shell {
+		width: min(840px, calc(100% - 32px));
+		margin: 0 auto;
+		padding: 40px 0 64px;
+	}
+
+	.head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin-bottom: 28px;
+	}
+
+	.title {
+		display: flex;
+		align-items: baseline;
+		gap: 12px;
+	}
+
+	h1 {
+		margin: 0;
+		font-size: 1.5rem;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		color: #0d1117;
+	}
+
+	.sub {
+		color: #8a93a0;
+		font-size: 0.85rem;
+	}
+
+	.status {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: #8a93a0;
+	}
+
+	.dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #d6a015;
+		box-shadow: 0 0 0 0 rgba(214, 160, 21, 0.5);
+		animation: pulse 2s infinite;
+	}
+
+	.status[data-status='connected'] {
+		color: #137a3b;
+	}
+	.status[data-status='connected'] .dot {
+		background: #16a34a;
+		box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.5);
+	}
+	.status[data-status='error'] {
+		color: #c0283a;
+	}
+	.status[data-status='error'] .dot {
+		background: #dc2626;
+		animation: none;
+	}
+
+	@keyframes pulse {
+		0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+		70% { box-shadow: 0 0 0 6px transparent; }
+		100% { box-shadow: 0 0 0 0 transparent; opacity: 0.7; }
+	}
+
+	.breadth {
+		display: grid;
+		grid-template-columns: auto 1fr auto;
+		align-items: center;
+		gap: 16px;
+		margin-bottom: 28px;
+	}
+
+	.stat {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.stat.down {
+		text-align: right;
+	}
+
+	.stat .k {
+		font-size: 0.72rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: #8a93a0;
+	}
+
+	.stat strong {
+		font-size: 1.6rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stat.up strong { color: #16a34a; }
+	.stat.down strong { color: #dc2626; }
+
+	.bar {
+		height: 6px;
+		border-radius: 999px;
+		background: #dc2626;
+		overflow: hidden;
+	}
+
+	.bar-up {
+		display: block;
+		height: 100%;
+		width: 50%;
+		background: #16a34a;
+		border-radius: 999px;
+		transition: width 0.4s ease;
+	}
+
+	.toolbar {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		margin-bottom: 8px;
+	}
+
+	.seg {
+		display: inline-flex;
+		gap: 2px;
+		padding: 3px;
+		border-radius: 8px;
+		background: #eceef1;
+	}
+
+	button,
+	input {
+		font: inherit;
+	}
+
+	.seg button {
+		border: 0;
+		padding: 6px 12px;
+		border-radius: 6px;
+		background: transparent;
+		color: #5b6573;
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.seg button.active {
+		background: #ffffff;
+		color: #0d1117;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+	}
+
+	#filter {
+		flex: 1;
+		min-width: 0;
+		max-width: 200px;
+		padding: 8px 12px;
+		border: 1px solid #e2e5ea;
+		border-radius: 8px;
+		background: #ffffff;
+		color: #0d1117;
+	}
+
+	#filter:focus {
+		outline: none;
+		border-color: #c4cad3;
+	}
+
+	.meta {
+		margin-left: auto;
+		color: #8a93a0;
+		font-size: 0.78rem;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.list {
+		margin-top: 12px;
+	}
+
+	.rows {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.row {
+		display: grid;
+		grid-template-columns: 1fr 120px 92px;
+		align-items: center;
+		column-gap: 24px;
+		padding: 13px 16px;
+		border-radius: 8px;
+		border-bottom: 1px solid #eef0f3;
+		transition: background 0.12s ease;
+	}
+
+	.row:last-child {
+		border-bottom: 0;
+	}
+
+	.row:hover {
+		background: #f6f7f9;
+	}
+
+	.sym {
+		font-weight: 500;
+		font-size: 0.95rem;
+		color: #0d1117;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.px {
+		font-variant-numeric: tabular-nums;
+		font-weight: 500;
+		color: #3d4350;
+		text-align: right;
+	}
+
+	.pct {
+		justify-self: end;
+		min-width: 84px;
+		padding: 4px 0;
+		border-radius: 6px;
+		font-variant-numeric: tabular-nums;
+		font-weight: 600;
+		font-size: 0.9rem;
+		text-align: center;
+	}
+
+	.gain .pct {
+		color: #15803d;
+		background: rgba(22, 163, 74, calc(0.08 + var(--i) * 0.14));
+	}
+	.loss .pct {
+		color: #c0283a;
+		background: rgba(220, 38, 38, calc(0.08 + var(--i) * 0.14));
+	}
+
+	.empty {
+		padding: 56px 16px;
+		text-align: center;
+		color: #8a93a0;
+	}
+
+	@media (max-width: 560px) {
+		.toolbar {
+			flex-wrap: wrap;
+		}
+		.meta {
+			width: 100%;
+			margin-left: 0;
+		}
+		.row {
+			grid-template-columns: 1fr auto 84px;
+			column-gap: 14px;
+			padding: 12px;
+		}
+	}
+</style>

@@ -4,6 +4,7 @@
 declare namespace Cloudflare {
 	interface Env {
 		ASSETS: Fetcher;
+		STOCK_ROOM: DurableObjectNamespace;
 	}
 }
 interface Env extends Cloudflare.Env {}
