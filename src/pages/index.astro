@@ -1,515 +1,1382 @@
 ---
-import Layout from '../layouts/Layout.astro';
 ---
 
-<Layout>
-	<div class="stage">
-		<canvas id="scene"></canvas>
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+		<meta name="color-scheme" content="dark" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<title>Codex Stock Bubbles</title>
+	</head>
+	<body>
+		<main class="terminal" aria-label="NIFTY 50 interactive stock bubbles">
+			<canvas id="marketCanvas" aria-label="Interactive NIFTY 50 bubble map"></canvas>
 
-		<header class="hud">
-			<div class="brand">
-				<h1>NIFTY&nbsp;50</h1>
-				<span class="tag">Live bubbles · size = |%Δ|</span>
-			</div>
+			<header class="hud" id="hud">
+				<section class="identity" aria-label="Market">
+					<h1>NIFTY 50</h1>
+				</section>
 
-			<div class="metrics">
-				<div class="metric up">
-					<span class="label">Advancing</span>
-					<strong id="advCount">--</strong>
+				<section class="stats" aria-label="Market status">
+					<div class="stat">
+						<label>Advancing</label>
+						<b id="advCount" class="up-value">--</b>
+					</div>
+					<div class="divider"></div>
+					<div class="stat">
+						<label>Declining</label>
+						<b id="decCount" class="down-value">--</b>
+					</div>
+					<div class="divider"></div>
+					<div class="stat">
+						<label>Avg&nbsp;Δ</label>
+						<b id="avgChange">--</b>
+					</div>
+
+					<div class="leaders">
+						<div class="chip up" id="gainerChip">
+							<span class="arrow">▲</span>
+							<span class="sym" id="gainerSym">--</span>
+							<span class="pct" id="gainerPct">--</span>
+						</div>
+						<div class="chip down" id="loserChip">
+							<span class="arrow">▼</span>
+							<span class="sym" id="loserSym">--</span>
+							<span class="pct" id="loserPct">--</span>
+						</div>
+					</div>
+
+					<div class="status" id="feedPill" data-status="connecting">
+						<span class="dot" id="feedDot" title="Connecting" aria-label="Connecting" role="status"></span>
+						<span id="statusText">Connecting</span>
+						<span class="clock" id="clock"></span>
+					</div>
+				</section>
+
+				<div class="breadth"><i id="breadthFill"></i></div>
+			</header>
+
+			<aside id="lens" class="lens" hidden>
+				<div class="lens-top">
+					<span id="lensSymbol">--</span>
+					<strong id="lensChange">--</strong>
 				</div>
-				<div class="metric down">
-					<span class="label">Declining</span>
-					<strong id="decCount">--</strong>
+				<div class="lens-name" id="lensName">--</div>
+				<div class="lens-grid">
+					<span>Price</span>
+					<strong id="lensPrice">--</strong>
+					<span>Day range</span>
+					<strong id="lensRange">--</strong>
+					<span>Volume</span>
+					<strong id="lensVolume">--</strong>
 				</div>
-				<div class="metric">
-					<span class="label">Updated</span>
-					<strong id="updatedAt" class="muted">--</strong>
-				</div>
-			</div>
+			</aside>
 
-			<div class="status" data-status="connecting">
-				<span class="dot"></span>
-				<span id="statusText">Connecting</span>
-			</div>
-		</header>
+			<div id="toast" class="toast" hidden></div>
+		</main>
 
-		<div id="warningText" class="warning" hidden></div>
+		<script>
+			const STOCKS = [
+				['HDFCBANK', 'HDFC Bank', 'Financials', 1519.8, 0.65, 22500000],
+				['ICICIBANK', 'ICICI Bank', 'Financials', 1087.3, -0.95, 18800000],
+				['KOTAKBANK', 'Kotak Bank', 'Financials', 1730.1, 0.38, 5200000],
+				['AXISBANK', 'Axis Bank', 'Financials', 1121.4, 0.65, 9900000],
+				['SBIN', 'SBI', 'Financials', 821.2, 0.38, 21400000],
+				['BAJFINANCE', 'Bajaj Finance', 'Financials', 6940.2, 2.47, 1550000],
+				['BAJAJFINSV', 'Bajaj Finserv', 'Financials', 1644.9, 3.59, 1900000],
+				['JIOFIN', 'Jio Fin', 'Financials', 342.5, 1.49, 16400000],
+				['HDFCLIFE', 'HDFC Life', 'Insurance', 654.3, 4.72, 4100000],
+				['SBILIFE', 'SBI Life', 'Insurance', 1445.8, 3.46, 830000],
+				['SHRIRAMFIN', 'Shriram Fin', 'Financials', 2948.2, 4.61, 1200000],
+				['RELIANCE', 'Reliance', 'Energy', 2893.4, 1.04, 6800000],
+				['ONGC', 'ONGC', 'Energy', 267.7, -1.12, 11900000],
+				['COALINDIA', 'Coal India', 'Energy', 444.8, 0.9, 8200000],
+				['NTPC', 'NTPC', 'Utilities', 359.3, -1.58, 12100000],
+				['POWERGRID', 'Power Grid', 'Utilities', 308.4, 0.28, 10400000],
+				['ITC', 'ITC', 'Consumer', 438.9, 1.07, 17800000],
+				['HINDUNILVR', 'HUL', 'Consumer', 2440.1, -0.59, 1300000],
+				['NESTLEIND', 'Nestle India', 'Consumer', 2351.3, 0.56, 720000],
+				['TATACONSUM', 'Tata Consumer', 'Consumer', 1042.6, -0.41, 1500000],
+				['ETERNAL', 'Eternal', 'Consumer', 188.2, 3.1, 29200000],
+				['TRENT', 'Trent', 'Consumer', 4612.5, 5.31, 1100000],
+				['TITAN', 'Titan', 'Consumer', 3654.1, 2.41, 980000],
+				['ASIANPAINT', 'Asian Paints', 'Consumer', 2890.4, -0.63, 890000],
+				['MARUTI', 'Maruti', 'Auto', 11944.7, 3.29, 650000],
+				['EICHERMOT', 'Eicher', 'Auto', 4315.9, 4.47, 720000],
+				['M&M', 'M&M', 'Auto', 2010.2, 3.06, 3900000],
+				['BAJAJ-AUTO', 'Bajaj Auto', 'Auto', 8916.3, -1.26, 410000],
+				['TMPV', 'Tata Motors PV', 'Auto', 971.6, 0.73, 8200000],
+				['INFY', 'Infosys', 'Technology', 1466.8, 1.72, 5700000],
+				['TCS', 'TCS', 'Technology', 3924.5, 0.16, 1800000],
+				['HCLTECH', 'HCL Tech', 'Technology', 1462.9, 1.14, 2100000],
+				['WIPRO', 'Wipro', 'Technology', 499.4, 0.54, 4600000],
+				['TECHM', 'Tech Mahindra', 'Technology', 1426.9, -0.16, 1900000],
+				['BHARTIARTL', 'Airtel', 'Telecom', 1336.5, 1.12, 5400000],
+				['LT', 'L&T', 'Industrials', 3639.1, 3.01, 2400000],
+				['BEL', 'BEL', 'Industrials', 308.1, 0.77, 16800000],
+				['ADANIENT', 'Adani Ent', 'Industrials', 3121.5, -0.22, 1300000],
+				['ADANIPORTS', 'Adani Ports', 'Industrials', 1359.9, -0.48, 2600000],
+				['ULTRACEMCO', 'UltraTech', 'Materials', 10152.8, 3.16, 360000],
+				['GRASIM', 'Grasim', 'Materials', 2462.5, 2.08, 1100000],
+				['TATASTEEL', 'Tata Steel', 'Materials', 148.5, -0.18, 23300000],
+				['JSWSTEEL', 'JSW Steel', 'Materials', 912.4, -0.02, 3100000],
+				['HINDALCO', 'Hindalco', 'Materials', 634.7, -0.8, 5300000],
+				['SUNPHARMA', 'Sun Pharma', 'Healthcare', 1534.2, -0.2, 1900000],
+				['CIPLA', 'Cipla', 'Healthcare', 1472.1, -0.53, 1250000],
+				['DRREDDY', "Dr Reddy's", 'Healthcare', 6284.7, 0.28, 470000],
+				['APOLLOHOSP', 'Apollo Hospitals', 'Healthcare', 6462.3, -0.09, 390000],
+				['MAXHEALTH', 'Max Health', 'Healthcare', 902.4, 1.73, 1700000],
+				['INDIGO', 'IndiGo', 'Travel', 4318.6, 3.8, 740000],
+			];
 
-		<div id="tooltip" class="tooltip" hidden></div>
-	</div>
-</Layout>
+			const NAME_BY_SYMBOL = new Map(STOCKS.map((s) => [s[0], s[1]]));
+			const SECTOR_BY_SYMBOL = new Map(STOCKS.map((s) => [s[0], s[2]]));
+			const SECTOR_COLORS = {
+				Financials: '#85a8ff',
+				Insurance: '#b9d776',
+				Energy: '#f1bb6d',
+				Utilities: '#7dd9cb',
+				Consumer: '#e7c46a',
+				Auto: '#d69cf2',
+				Technology: '#8dd2ff',
+				Telecom: '#9dd6a7',
+				Industrials: '#c8cad4',
+				Materials: '#f1a6a1',
+				Healthcare: '#b3a6ff',
+				Travel: '#ffa46b',
+				Other: '#9aa4b2',
+			};
 
-<script>
-	type StockRow = {
-		symbol: string;
-		lastPrice: number;
-		change: number;
-		pchange: number;
-		tradedVolume: number;
-		tradedValue: number;
-		high: number;
-		low: number;
-	};
+			const FIELD = {
+				minRadius: 22,
+				maxRadius: 98,
+				changeCap: 5.8,
+				restitution: 0.48,
+				friction: 0.988,
+				air: 0.996,
+				mouseInfluence: 210,
+				gridSize: 148,
+			};
 
-	class Bubble {
-		x = 0;
-		y = 0;
-		vx = 0;
-		vy = 0;
-		radius = MIN_R;
-		targetRadius = MIN_R;
-		flash = 0; // 0..1 pulse when price changes
-		grabbed = false;
+			const canvas = document.getElementById('marketCanvas');
+			const ctx = canvas.getContext('2d', { alpha: true });
+			const hud = document.getElementById('hud');
+			const lens = document.getElementById('lens');
+			const toast = document.getElementById('toast');
+			const advCount = document.getElementById('advCount');
+			const decCount = document.getElementById('decCount');
+			const avgChange = document.getElementById('avgChange');
+			const topMover = document.getElementById('topMover');
+			const feedPill = document.getElementById('feedPill');
+			const feedDot = document.getElementById('feedDot');
+			const statusText = document.getElementById('statusText');
+			const clock = document.getElementById('clock');
+			const breadthFill = document.getElementById('breadthFill');
+			const gainerSym = document.getElementById('gainerSym');
+			const gainerPct = document.getElementById('gainerPct');
+			const loserSym = document.getElementById('loserSym');
+			const loserPct = document.getElementById('loserPct');
+			const lensSymbol = document.getElementById('lensSymbol');
+			const lensChange = document.getElementById('lensChange');
+			const lensName = document.getElementById('lensName');
+			const lensPrice = document.getElementById('lensPrice');
+			const lensRange = document.getElementById('lensRange');
+			const lensVolume = document.getElementById('lensVolume');
 
-		constructor(
-			public symbol: string,
-			public pchange: number,
-			public lastPrice: number,
-			public change: number,
-		) {}
+			const priceFormatter = new Intl.NumberFormat('en-IN', {
+				maximumFractionDigits: 2,
+				minimumFractionDigits: 2,
+			});
+			const compactFormatter = new Intl.NumberFormat('en-IN', {
+				notation: 'compact',
+				maximumFractionDigits: 1,
+			});
+			const timeFormatter = new Intl.DateTimeFormat('en-IN', {
+				hour: '2-digit',
+				minute: '2-digit',
+				second: '2-digit',
+			});
 
-		get mass() {
-			return this.radius * this.radius;
-		}
-	}
+			let width = 0;
+			let height = 0;
+			let dpr = 1;
+			let safeTop = 86;
+			let dataSource = 'demo';
+			let socket;
+			let reconnectTimer = 0;
+			let lastRealMessageAt = 0;
+			let lastFrame = performance.now();
+			let frameId = 0;
+			let hover = null;
+			let grabbed = null;
+			let socketTried = false;
+			let reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-	const NAMES: Record<string, string> = {
-		TRENT: 'Trent', HDFCLIFE: 'HDFC Life', SHRIRAMFIN: 'Shriram Fin',
-		EICHERMOT: 'Eicher', INDIGO: 'IndiGo', BAJAJFINSV: 'Bajaj Finserv',
-		SBILIFE: 'SBI Life', MARUTI: 'Maruti', ULTRACEMCO: 'UltraTech',
-		ETERNAL: 'Eternal', 'M&M': 'M&M', LT: 'L&T',
-		BAJFINANCE: 'Bajaj Fin', TITAN: 'Titan', GRASIM: 'Grasim',
-		MAXHEALTH: 'Max Health', INFY: 'Infosys', TMPV: 'Tata Motors PV',
-		NTPC: 'NTPC', JIOFIN: 'Jio Fin', 'BAJAJ-AUTO': 'Bajaj Auto',
-		HCLTECH: 'HCL Tech', BHARTIARTL: 'Airtel', ONGC: 'ONGC',
-		ITC: 'ITC', RELIANCE: 'Reliance', ICICIBANK: 'ICICI Bank',
-		COALINDIA: 'Coal India', HINDALCO: 'Hindalco', BEL: 'BEL',
-		AXISBANK: 'Axis Bank', HDFCBANK: 'HDFC Bank', ASIANPAINT: 'Asian Paints',
-		HINDUNILVR: 'HUL', ADANIENT: 'Adani Ent', WIPRO: 'Wipro',
-		CIPLA: 'Cipla', KOTAKBANK: 'Kotak', SBIN: 'SBI',
-		DRREDDY: "Dr Reddy's", POWERGRID: 'Power Grid', ADANIPORTS: 'Adani Ports',
-		SUNPHARMA: 'Sun Pharma', TATASTEEL: 'Tata Steel', TECHM: 'Tech Mahindra',
-		TATACONSUM: 'Tata Consumer', APOLLOHOSP: 'Apollo', TCS: 'TCS',
-		NESTLEIND: 'Nestle', JSWSTEEL: 'JSW Steel',
-	};
+			const pointer = {
+				x: -1000,
+				y: -1000,
+				px: -1000,
+				py: -1000,
+				vx: 0,
+				vy: 0,
+				down: false,
+				id: -1,
+				pressT: 0,
+				dragDX: 0,
+				dragDY: 0,
+			};
 
-	// ---- config --------------------------------------------------------------
-	const MIN_R = 20;
-	const MAX_R = 86;
-	const PCT_CAP = 5; // |%change| mapped to the biggest bubble
-	const WANDER = 6; // gentle random drift acceleration
-	const MAX_SPEED = 90; // px/s cap for ambient motion
-	const RESTITUTION = 0.55;
-	// drag is a spring toward the cursor; bigger bubbles = softer spring = more lag
-	const FOLLOW_STIFF_SMALL = 130;
-	const FOLLOW_STIFF_BIG = 34;
-	const FOLLOW_DAMP = 0.78;
+			class Bubble {
+				constructor(row, index) {
+					this.symbol = row.symbol;
+					this.name = row.name || row.symbol;
+					this.sector = row.sector || 'Other';
+					this.lastPrice = row.lastPrice;
+					this.change = row.change;
+					this.pchange = row.pchange;
+					this.volume = row.tradedVolume || row.volume || 0;
+					this.high = row.high || row.lastPrice * (1 + Math.abs(row.pchange) / 160 + 0.004);
+					this.low = row.low || row.lastPrice * (1 - Math.abs(row.pchange) / 170 - 0.004);
+					this.index = index;
+					this.r = 10;
+					this.targetR = 30;
+					this.x = 0;
+					this.y = 0;
+					this.vx = 0;
+					this.vy = 0;
+					this.ax = 0;
+					this.ay = 0;
+					this.tx = 0;
+					this.ty = 0;
+					this.seed = Math.random() * 1000;
+					this.flash = 0;
+					this.pressure = 0;
+					this.selected = false;
+					this.sleep = Math.random();
+					this.history = [];
+					this.justSpawned = true;
+				}
 
-	const canvas = document.getElementById('scene') as HTMLCanvasElement;
-	const ctx = canvas.getContext('2d')!;
-	const statusEl = document.querySelector('.status') as HTMLElement;
-	const statusTextEl = document.getElementById('statusText')!;
-	const updatedAtEl = document.getElementById('updatedAt')!;
-	const advCountEl = document.getElementById('advCount')!;
-	const decCountEl = document.getElementById('decCount')!;
-	const warningEl = document.getElementById('warningText') as HTMLElement;
-	const tooltipEl = document.getElementById('tooltip') as HTMLElement;
+				get mass() {
+					return Math.max(1, this.r * this.r * 0.018);
+				}
 
-	let width = 0;
-	let height = 0;
-	let dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-	const timeFmt = new Intl.DateTimeFormat('en-IN', {
-		hour: '2-digit', minute: '2-digit', second: '2-digit',
-	});
-	const priceFmt = new Intl.NumberFormat('en-IN', {
-		maximumFractionDigits: 2, minimumFractionDigits: 2,
-	});
-
-	const bubbles: Bubble[] = [];
-	const bySymbol = new Map<string, Bubble>();
-
-	function radiusFor(pchange: number): number {
-		const t = Math.min(Math.abs(pchange) / PCT_CAP, 1);
-		return MIN_R + Math.sqrt(t) * (MAX_R - MIN_R);
-	}
-
-	function resize() {
-		const stage = document.querySelector('.stage') as HTMLElement;
-		width = stage.clientWidth;
-		height = stage.clientHeight;
-		dpr = Math.min(window.devicePixelRatio || 1, 2);
-		canvas.width = Math.floor(width * dpr);
-		canvas.height = Math.floor(height * dpr);
-		canvas.style.width = `${width}px`;
-		canvas.style.height = `${height}px`;
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		// pull any stragglers back inside the new bounds
-		for (const b of bubbles) {
-			b.x = Math.min(Math.max(b.x, b.radius), width - b.radius);
-			b.y = Math.min(Math.max(b.y, b.radius), height - b.radius);
-		}
-	}
-
-	// ---- data sync -----------------------------------------------------------
-	function upsert(stock: StockRow) {
-		const targetRadius = radiusFor(stock.pchange);
-		const existing = bySymbol.get(stock.symbol);
-
-		if (existing) {
-			existing.targetRadius = targetRadius;
-			if (existing.lastPrice !== stock.lastPrice) existing.flash = 1;
-			existing.pchange = stock.pchange;
-			existing.lastPrice = stock.lastPrice;
-			existing.change = stock.change;
-			return;
-		}
-
-		const b = new Bubble(stock.symbol, stock.pchange, stock.lastPrice, stock.change);
-		// scatter new bubbles across the whole grid
-		b.x = MIN_R + Math.random() * Math.max(1, width - MIN_R * 2);
-		b.y = MIN_R + Math.random() * Math.max(1, height - MIN_R * 2);
-		b.radius = MIN_R * 0.5;
-		b.targetRadius = targetRadius;
-		const a = Math.random() * Math.PI * 2;
-		b.vx = Math.cos(a) * 30;
-		b.vy = Math.sin(a) * 30;
-		bubbles.push(b);
-		bySymbol.set(stock.symbol, b);
-	}
-
-	function applyData(stocks: StockRow[]) {
-		const seen = new Set<string>();
-		for (const s of stocks) {
-			seen.add(s.symbol);
-			upsert(s);
-		}
-		for (const [sym, b] of bySymbol) {
-			if (!seen.has(sym)) {
-				bySymbol.delete(sym);
-				const i = bubbles.indexOf(b);
-				if (i >= 0) bubbles.splice(i, 1);
-			}
-		}
-		const adv = stocks.filter((s) => s.pchange > 0).length;
-		const dec = stocks.filter((s) => s.pchange < 0).length;
-		advCountEl.textContent = String(adv);
-		decCountEl.textContent = String(dec);
-	}
-
-	// ---- physics -------------------------------------------------------------
-	function followStiffness(r: number): number {
-		const t = Math.min(Math.max((r - MIN_R) / (MAX_R - MIN_R), 0), 1);
-		return FOLLOW_STIFF_SMALL + (FOLLOW_STIFF_BIG - FOLLOW_STIFF_SMALL) * t;
-	}
-
-	function step(dt: number) {
-		for (const b of bubbles) {
-			// ease radius toward target
-			const dr = b.targetRadius - b.radius;
-			if (Math.abs(dr) > 0.1) b.radius += dr * Math.min(1, dt * 4);
-
-			if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 1.2);
-
-			if (b.grabbed) {
-				// spring the bubble toward the cursor instead of snapping to it,
-				// so it trails behind — heavier (bigger) bubbles lag more
-				const tx = Math.min(Math.max(pointerX + grabDX, b.radius), width - b.radius);
-				const ty = Math.min(Math.max(pointerY + grabDY, b.radius), height - b.radius);
-				const k = followStiffness(b.radius);
-				b.vx += (tx - b.x) * k * dt;
-				b.vy += (ty - b.y) * k * dt;
-				b.vx *= FOLLOW_DAMP;
-				b.vy *= FOLLOW_DAMP;
-			} else {
-				// random gentle drift keeps them alive and floating
-				b.vx += (Math.random() - 0.5) * WANDER;
-				b.vy += (Math.random() - 0.5) * WANDER;
-				// light damping so motion stays calm
-				b.vx *= 0.992;
-				b.vy *= 0.992;
-				const sp = Math.hypot(b.vx, b.vy);
-				if (sp > MAX_SPEED) {
-					b.vx = (b.vx / sp) * MAX_SPEED;
-					b.vy = (b.vy / sp) * MAX_SPEED;
+				get sign() {
+					return this.pchange >= 0 ? 1 : -1;
 				}
 			}
 
-			b.x += b.vx * dt;
-			b.y += b.vy * dt;
-		}
+			const bubbles = [];
+			const bubbleBySymbol = new Map();
+			const ripples = [];
+			const sparks = [];
+			const grid = new Map();
 
-		// resolve collisions (a few iterations for stability)
-		for (let iter = 0; iter < 4; iter++) {
-			for (let i = 0; i < bubbles.length; i++) {
-				const a = bubbles[i];
-				for (let j = i + 1; j < bubbles.length; j++) {
-					collide(a, bubbles[j]);
+			function normalizeSeedRows() {
+				return STOCKS.map(([symbol, name, sector, lastPrice, pchange, volume]) => {
+					const change = lastPrice * pchange / 100;
+					return {
+						symbol,
+						name,
+						sector,
+						lastPrice,
+						change,
+						pchange,
+						volume,
+						tradedVolume: volume,
+						high: lastPrice * (1 + Math.abs(pchange) / 135 + 0.008),
+						low: lastPrice * (1 - Math.abs(pchange) / 145 - 0.008),
+					};
+				});
+			}
+
+			let demoRows = normalizeSeedRows();
+
+			function clamp(value, min, max) {
+				return Math.max(min, Math.min(max, value));
+			}
+
+			function lerp(a, b, t) {
+				return a + (b - a) * t;
+			}
+
+			function seededUnit(seed, offset) {
+				const value = Math.sin(seed * 12.9898 + offset * 78.233) * 43758.5453;
+				return value - Math.floor(value);
+			}
+
+			function signed(value) {
+				return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+			}
+
+			function colorFor(pchange, alpha = 1) {
+				if (pchange >= 0) {
+					return `rgba(92, 215, 159, ${alpha})`;
+				}
+				return `rgba(238, 111, 119, ${alpha})`;
+			}
+
+			function sectorColor(sector, alpha = 1) {
+				const hex = SECTOR_COLORS[sector] || SECTOR_COLORS.Other;
+				const r = Number.parseInt(hex.slice(1, 3), 16);
+				const g = Number.parseInt(hex.slice(3, 5), 16);
+				const b = Number.parseInt(hex.slice(5, 7), 16);
+				return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+			}
+
+			function tintHex(pchange) {
+				return pchange >= 0 ? '#5cd79f' : '#ee6f77';
+			}
+
+			function radiusFor(pchange) {
+				const viewport = Math.max(360, Math.min(width, height || 900));
+				const minR = clamp(viewport * 0.027, 18, FIELD.minRadius);
+				const maxR = clamp(viewport * 0.105, 64, FIELD.maxRadius);
+				const t = Math.sqrt(clamp(Math.abs(pchange) / FIELD.changeCap, 0, 1));
+				return minR + t * (maxR - minR);
+			}
+
+			function adaptField() {
+				const area = Math.max(1, width * Math.max(1, height - safeTop));
+				const density = clamp(area / 920000, 0.72, 1.18);
+				FIELD.maxRadius = Math.round(96 * density);
+				FIELD.minRadius = Math.round(22 * density);
+				FIELD.gridSize = Math.round(142 * density);
+			}
+
+			function resize() {
+				dpr = Math.min(window.devicePixelRatio || 1, 2);
+				width = Math.max(1, window.innerWidth);
+				height = Math.max(1, window.innerHeight);
+				safeTop = Math.ceil(hud.getBoundingClientRect().height + 2);
+				canvas.width = Math.floor(width * dpr);
+				canvas.height = Math.floor(height * dpr);
+				canvas.style.width = `${width}px`;
+				canvas.style.height = `${height}px`;
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				adaptField();
+				assignTargets(true);
+				for (const b of bubbles) {
+					b.targetR = radiusFor(b.pchange);
+					b.r = clamp(b.r || b.targetR, 12, b.targetR + 18);
+					b.x = clamp(b.x || b.tx, b.r + 8, width - b.r - 8);
+					b.y = clamp(b.y || b.ty, safeTop + b.r, height - b.r - 10);
 				}
 			}
-		}
 
-		// keep everyone inside the walls
-		for (const b of bubbles) {
-			if (b.x < b.radius) { b.x = b.radius; b.vx = Math.abs(b.vx) * RESTITUTION; }
-			else if (b.x > width - b.radius) { b.x = width - b.radius; b.vx = -Math.abs(b.vx) * RESTITUTION; }
-			if (b.y < b.radius) { b.y = b.radius; b.vy = Math.abs(b.vy) * RESTITUTION; }
-			else if (b.y > height - b.radius) { b.y = height - b.radius; b.vy = -Math.abs(b.vy) * RESTITUTION; }
-		}
-	}
+			function assignTargets(force = false) {
+				if (!width || !height || bubbles.length === 0) return;
+				const workTop = safeTop + 4;
+				const workHeight = Math.max(160, height - workTop - 22);
+				const sorted = [...bubbles].sort((a, b) => Math.abs(b.pchange) - Math.abs(a.pchange));
 
-	function collide(a: Bubble, b: Bubble) {
-		let dx = b.x - a.x;
-		let dy = b.y - a.y;
-		let dist = Math.hypot(dx, dy);
-		const min = a.radius + b.radius;
-		if (dist >= min) return;
+				const cols = Math.ceil(Math.sqrt(sorted.length * (width / Math.max(400, workHeight))));
+				const rows = Math.ceil(sorted.length / cols);
+				const cellW = width / cols;
+				const cellH = workHeight / rows;
 
-		if (dist === 0) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; dist = 0.01; }
-		const nx = dx / dist;
-		const ny = dy / dist;
-		const overlap = min - dist;
+				for (let i = 0; i < sorted.length; i++) {
+					const b = sorted[i];
+					const r = radiusFor(b.pchange);
+					b.targetR = r;
 
-		// finite inverse masses: a small bubble simply can't shove a big one far
-		const ima = 1 / a.mass;
-		const imb = 1 / b.mass;
-		const imSum = ima + imb;
+					let tx;
+					let ty;
 
-		// positional separation
-		a.x -= nx * overlap * (ima / imSum);
-		a.y -= ny * overlap * (ima / imSum);
-		b.x += nx * overlap * (imb / imSum);
-		b.y += ny * overlap * (imb / imSum);
+					tx = lerp(r + 20, width - r - 20, seededUnit(b.seed, 1));
+					ty = lerp(workTop + r + 10, height - r - 18, seededUnit(b.seed, 2));
 
-		// velocity impulse (only if approaching)
-		const rvx = b.vx - a.vx;
-		const rvy = b.vy - a.vy;
-		const vn = rvx * nx + rvy * ny;
-		if (vn > 0) return;
-		const jImp = (-(1 + RESTITUTION) * vn) / imSum;
-		a.vx -= jImp * nx * ima;
-		a.vy -= jImp * ny * ima;
-		b.vx += jImp * nx * imb;
-		b.vy += jImp * ny * imb;
-	}
+					const changePull = clamp(b.pchange / FIELD.changeCap, -1, 1);
+					tx += Math.sin(b.seed * 2.1) * Math.min(34, cellW * 0.2);
+					ty += changePull * -18 + Math.cos(b.seed * 2.9) * Math.min(28, cellH * 0.18);
+					b.tx = clamp(tx, r + 12, width - r - 12);
+					b.ty = clamp(ty, workTop + r, height - r - 12);
 
-	// ---- pointer / drag ------------------------------------------------------
-	let grabbed: Bubble | null = null;
-	let grabDX = 0;
-	let grabDY = 0;
-	let pointerX = 0;
-	let pointerY = 0;
-
-	function pointerPos(e: PointerEvent) {
-		const rect = canvas.getBoundingClientRect();
-		return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-	}
-
-	function bubbleAt(x: number, y: number): Bubble | null {
-		// topmost (largest) first
-		for (let i = bubbles.length - 1; i >= 0; i--) {
-			const b = bubbles[i];
-			if (Math.hypot(b.x - x, b.y - y) <= b.radius) return b;
-		}
-		return null;
-	}
-
-	canvas.addEventListener('pointerdown', (e) => {
-		const { x, y } = pointerPos(e);
-		const hit = bubbleAt(x, y);
-		if (!hit) return;
-		grabbed = hit;
-		hit.grabbed = true;
-		grabDX = hit.x - x;
-		grabDY = hit.y - y;
-		pointerX = x;
-		pointerY = y;
-		canvas.setPointerCapture(e.pointerId);
-		canvas.style.cursor = 'grabbing';
-	});
-
-	canvas.addEventListener('pointermove', (e) => {
-		const { x, y } = pointerPos(e);
-		pointerX = x;
-		pointerY = y;
-		updateHover(e.clientX, e.clientY);
-	});
-
-	function endDrag(e: PointerEvent) {
-		if (!grabbed) return;
-		// velocity is already physical from the follow spring, so just let go
-		grabbed.grabbed = false;
-		grabbed = null;
-		canvas.style.cursor = 'grab';
-		try { canvas.releasePointerCapture(e.pointerId); } catch {}
-	}
-	canvas.addEventListener('pointerup', endDrag);
-	canvas.addEventListener('pointercancel', endDrag);
-
-	function updateHover(clientX: number, clientY: number) {
-		const rect = canvas.getBoundingClientRect();
-		const hit = bubbleAt(clientX - rect.left, clientY - rect.top);
-		if (hit) {
-			const sign = hit.change >= 0 ? '+' : '';
-			tooltipEl.innerHTML =
-				`<strong>${escapeHtml(NAMES[hit.symbol] || hit.symbol)}</strong>` +
-				`<span>₹${priceFmt.format(hit.lastPrice)}</span>` +
-				`<span class="${hit.pchange >= 0 ? 'pos' : 'neg'}">` +
-				`${sign}${priceFmt.format(hit.change)} (${sign}${hit.pchange.toFixed(2)}%)</span>`;
-			tooltipEl.hidden = false;
-			tooltipEl.style.left = `${clientX}px`;
-			tooltipEl.style.top = `${clientY}px`;
-			if (!grabbed) canvas.style.cursor = 'grab';
-		} else {
-			tooltipEl.hidden = true;
-			if (!grabbed) canvas.style.cursor = 'default';
-		}
-	}
-	canvas.addEventListener('pointerleave', () => { tooltipEl.hidden = true; });
-
-	// ---- rendering -----------------------------------------------------------
-	// muted, slightly desaturated tones so colour reads as a hint, not a slab
-	function tint(pchange: number, alpha: number): string {
-		if (pchange >= 0) return `hsla(150, 46%, 52%, ${alpha})`;
-		return `hsla(5, 62%, 56%, ${alpha})`;
-	}
-
-	function drawBubble(b: Bubble) {
-		const { x, y, radius: r } = b;
-		const up = b.pchange >= 0;
-		const t = Math.min(Math.abs(b.pchange) / PCT_CAP, 1);
-
-		// flat disc: nearly clear in the middle, colour gathers gently toward the
-		// rim — no offset highlight, so it reads as a flat token, not a sphere
-		const grad = ctx.createRadialGradient(x, y, r * 0.35, x, y, r);
-		grad.addColorStop(0, tint(b.pchange, 0.03 + t * 0.04));
-		grad.addColorStop(0.78, tint(b.pchange, 0.06 + t * 0.07));
-		grad.addColorStop(1, tint(b.pchange, 0.16 + t * 0.16));
-		ctx.beginPath();
-		ctx.arc(x, y, r, 0, Math.PI * 2);
-		ctx.fillStyle = grad;
-		ctx.fill();
-
-		// the ring carries the signal — soft glow on bigger movers
-		ctx.save();
-		ctx.beginPath();
-		ctx.arc(x, y, r - 1, 0, Math.PI * 2);
-		ctx.lineWidth = 1.25 + t * 1.5;
-		ctx.strokeStyle = tint(b.pchange, 0.4 + t * 0.45);
-		ctx.shadowColor = tint(b.pchange, 0.5);
-		ctx.shadowBlur = (4 + t * 12) * (b.flash * 0.6 + 1);
-		ctx.stroke();
-		ctx.restore();
-
-		if (r >= 24) {
-			const label = NAMES[b.symbol] || b.symbol;
-			const sign = up ? '+' : '';
-			const symSize = Math.max(9, Math.min(r * 0.32, 15));
-			const pctSize = Math.max(9, Math.min(r * 0.3, 14));
-
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillStyle = 'rgba(244,247,251,0.94)';
-			ctx.font = `600 ${symSize}px Inter, system-ui, sans-serif`;
-			ctx.fillText(fit(label, r), x, y - pctSize * 0.6);
-
-			ctx.fillStyle = up ? 'rgba(120,210,170,0.92)' : 'rgba(228,150,158,0.92)';
-			ctx.font = `600 ${pctSize}px Inter, system-ui, sans-serif`;
-			ctx.fillText(`${sign}${b.pchange.toFixed(2)}%`, x, y + symSize * 0.7);
-		}
-	}
-
-	function fit(text: string, r: number): string {
-		const max = Math.floor(r / 4);
-		return text.length > max ? text.slice(0, Math.max(2, max - 1)) + '…' : text;
-	}
-
-	let last = performance.now();
-	function frame(now: number) {
-		let dt = (now - last) / 1000;
-		last = now;
-		if (dt > 0.05) dt = 0.05; // clamp big tab-switch gaps
-
-		step(dt);
-		ctx.clearRect(0, 0, width, height);
-		for (const b of bubbles) drawBubble(b);
-		requestAnimationFrame(frame);
-	}
-
-	// ---- websocket -----------------------------------------------------------
-	let reconnectTimer: number | undefined;
-
-	function setStatus(status: string, text: string) {
-		statusEl.dataset.status = status;
-		statusTextEl.textContent = text;
-	}
-
-	function connect() {
-		clearTimeout(reconnectTimer);
-		setStatus('connecting', 'Connecting');
-
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const socket = new WebSocket(`${protocol}//${window.location.host}/api/stocks/ws`);
-
-		socket.addEventListener('open', () => setStatus('connected', 'Live'));
-
-		socket.addEventListener('message', (event) => {
-			const message = JSON.parse(event.data);
-
-			if (message.type === 'error') {
-				setStatus('error', 'Offline');
-				updatedAtEl.textContent = formatTime(message.updatedAt);
-				warningEl.textContent = message.message;
-				warningEl.hidden = false;
-				return;
+					if (force && (!b.x || !b.y || b.justSpawned)) {
+						b.x = clamp(b.tx + (Math.random() - 0.5) * 120, r + 12, width - r - 12);
+						b.y = clamp(b.ty + (Math.random() - 0.5) * 120, workTop + r, height - r - 12);
+						b.vx = (Math.random() - 0.5) * 55;
+						b.vy = (Math.random() - 0.5) * 55;
+						b.justSpawned = false;
+					}
+				}
 			}
 
-			setStatus(message.stale ? 'stale' : 'connected', message.stale ? 'Stale' : 'Live');
-			warningEl.textContent = message.warning || '';
-			warningEl.hidden = !message.warning;
-			applyData(message.stocks as StockRow[]);
-			updatedAtEl.textContent = formatTime(message.updatedAt);
-		});
+			function scatterNewBubble(b) {
+				const r = radiusFor(b.pchange);
+				const workTop = safeTop + 4;
+				b.targetR = r;
+				b.r = Math.max(10, r * 0.42);
+				b.x = clamp(r + Math.random() * Math.max(1, width - r * 2), r + 12, width - r - 12);
+				b.y = clamp(workTop + r + Math.random() * Math.max(1, height - workTop - r * 2), workTop + r, height - r - 12);
+				const angle = Math.random() * Math.PI * 2;
+				const speed = 24 + Math.random() * 34;
+				b.vx = Math.cos(angle) * speed;
+				b.vy = Math.sin(angle) * speed;
+				b.tx = b.x;
+				b.ty = b.y;
+				b.justSpawned = false;
+			}
 
-		socket.addEventListener('close', () => {
-			setStatus('connecting', 'Reconnecting');
-			reconnectTimer = window.setTimeout(connect, 1500);
-		});
+			function upsert(row, index) {
+				const symbol = row.symbol;
+				const sector = row.sector || SECTOR_BY_SYMBOL.get(symbol) || 'Other';
+				const name = row.name || NAME_BY_SYMBOL.get(symbol) || symbol;
+				const normalized = {
+					...row,
+					name,
+					sector,
+					lastPrice: Number(row.lastPrice) || 0,
+					change: Number(row.change) || 0,
+					pchange: Number(row.pchange) || 0,
+					volume: Number(row.tradedVolume || row.volume || 0),
+					high: Number(row.high) || 0,
+					low: Number(row.low) || 0,
+				};
 
-		socket.addEventListener('error', () => socket.close());
+				let b = bubbleBySymbol.get(symbol);
+				if (!b) {
+					b = new Bubble(normalized, index);
+					bubbleBySymbol.set(symbol, b);
+					bubbles.push(b);
+					if (width && height) scatterNewBubble(b);
+				}
+
+				const priceDelta = Math.abs(normalized.lastPrice - b.lastPrice);
+				const pctDelta = Math.abs(normalized.pchange - b.pchange);
+				if (priceDelta > 0.001 || pctDelta > 0.02) {
+					b.flash = Math.min(1, b.flash + 0.9);
+					b.vx += (Math.random() - 0.5) * (12 + pctDelta * 12);
+					b.vy += (Math.random() - 0.5) * (12 + pctDelta * 12);
+					addSpark(b.x || b.tx || width * 0.5, b.y || b.ty || height * 0.5, normalized.pchange, 5);
+				}
+
+				b.index = index;
+				b.name = normalized.name;
+				b.sector = normalized.sector;
+				b.lastPrice = normalized.lastPrice;
+				b.change = normalized.change;
+				b.pchange = normalized.pchange;
+				b.volume = normalized.volume;
+				b.high = normalized.high || normalized.lastPrice * (1 + Math.abs(normalized.pchange) / 145 + 0.008);
+				b.low = normalized.low || normalized.lastPrice * (1 - Math.abs(normalized.pchange) / 155 - 0.008);
+				b.targetR = radiusFor(b.pchange);
+				return b;
+			}
+
+			function applyRows(rows, source, warning = '') {
+				const normalized = rows
+					.filter((row) => row && row.symbol)
+					.map((row) => ({
+						...row,
+						name: row.name || NAME_BY_SYMBOL.get(row.symbol) || row.symbol,
+						sector: row.sector || SECTOR_BY_SYMBOL.get(row.symbol) || 'Other',
+					}));
+
+				const seen = new Set();
+				normalized.forEach((row, index) => {
+					seen.add(row.symbol);
+					upsert(row, index);
+				});
+
+				for (const [symbol, bubble] of bubbleBySymbol.entries()) {
+					if (!seen.has(symbol)) {
+						bubbleBySymbol.delete(symbol);
+						const index = bubbles.indexOf(bubble);
+						if (index >= 0) bubbles.splice(index, 1);
+					}
+				}
+
+				assignTargets();
+				updateHud(normalized, source);
+				if (warning) showToast(warning);
+			}
+
+			function updateHud(rows, source) {
+				const adv = rows.filter((r) => r.pchange > 0).length;
+				const dec = rows.filter((r) => r.pchange < 0).length;
+				const total = rows.length || 1;
+				const avg = rows.reduce((sum, row) => sum + row.pchange, 0) / total;
+				const leader = rows.reduce((best, row) => Math.abs(row.pchange) > Math.abs(best.pchange) ? row : best, rows[0] || { symbol: '--', pchange: 0 });
+				const gainer = rows.reduce((best, row) => row.pchange > best.pchange ? row : best, rows[0] || { symbol: '--', pchange: 0 });
+				const loser = rows.reduce((best, row) => row.pchange < best.pchange ? row : best, rows[0] || { symbol: '--', pchange: 0 });
+				const breadth = adv + dec > 0 ? adv / (adv + dec) : 0.5;
+
+				advCount.textContent = String(adv);
+				decCount.textContent = String(dec);
+				avgChange.textContent = signed(avg);
+				avgChange.className = avg >= 0 ? 'up-value' : 'down-value';
+				if (topMover) topMover.textContent = `${leader.symbol} ${signed(leader.pchange)}`;
+				gainerSym.textContent = gainer.symbol.replace('-AUTO', '');
+				gainerPct.textContent = signed(gainer.pchange);
+				loserSym.textContent = loser.symbol.replace('-AUTO', '');
+				loserPct.textContent = signed(loser.pchange);
+				breadthFill.style.width = `${(breadth * 100).toFixed(1)}%`;
+
+				if (source === 'live') {
+					setFeed('connected', 'Live');
+				} else if (source === 'stale') {
+					setFeed('stale', 'Stale');
+				} else {
+					setFeed('demo', 'Demo');
+				}
+			}
+
+			function setFeed(status, text) {
+				feedPill.dataset.status = status;
+				feedDot.title = text;
+				feedDot.setAttribute('aria-label', text);
+				statusText.textContent = text;
+			}
+
+			function showToast(message) {
+				toast.textContent = message;
+				toast.hidden = false;
+				window.clearTimeout(toast._timer);
+				toast._timer = window.setTimeout(() => {
+					toast.hidden = true;
+				}, 4200);
+			}
+
+			function addRipple(x, y, color, power = 1) {
+				ripples.push({
+					x,
+					y,
+					r: 4,
+					max: 90 + power * 58,
+					a: 0.42,
+					color,
+					line: 1.2 + power * 0.8,
+				});
+				if (ripples.length > 26) ripples.shift();
+			}
+
+			function addSpark(x, y, pchange, count = 3) {
+				if (reducedMotion) return;
+				for (let i = 0; i < count; i++) {
+					const angle = Math.random() * Math.PI * 2;
+					const speed = 25 + Math.random() * 90;
+					sparks.push({
+						x,
+						y,
+						vx: Math.cos(angle) * speed,
+						vy: Math.sin(angle) * speed,
+						life: 0.45 + Math.random() * 0.35,
+						maxLife: 0.7,
+						color: tintHex(pchange),
+						size: 1.2 + Math.random() * 2.5,
+					});
+				}
+				if (sparks.length > 220) sparks.splice(0, sparks.length - 220);
+			}
+
+			function rebuildGrid() {
+				grid.clear();
+				for (const b of bubbles) {
+					const minX = Math.floor((b.x - b.r) / FIELD.gridSize);
+					const maxX = Math.floor((b.x + b.r) / FIELD.gridSize);
+					const minY = Math.floor((b.y - b.r) / FIELD.gridSize);
+					const maxY = Math.floor((b.y + b.r) / FIELD.gridSize);
+					for (let gy = minY; gy <= maxY; gy++) {
+						for (let gx = minX; gx <= maxX; gx++) {
+							const key = `${gx},${gy}`;
+							let bucket = grid.get(key);
+							if (!bucket) {
+								bucket = [];
+								grid.set(key, bucket);
+							}
+							bucket.push(b);
+						}
+					}
+				}
+			}
+
+			function neighborsFor(b) {
+				const out = [];
+				const cx = Math.floor(b.x / FIELD.gridSize);
+				const cy = Math.floor(b.y / FIELD.gridSize);
+				for (let gy = cy - 1; gy <= cy + 1; gy++) {
+					for (let gx = cx - 1; gx <= cx + 1; gx++) {
+						const bucket = grid.get(`${gx},${gy}`);
+						if (bucket) out.push(...bucket);
+					}
+				}
+				return out;
+			}
+
+			function integrate(dt) {
+				const motionScale = reducedMotion ? 0.35 : 1;
+				const now = performance.now() * 0.001;
+				const boundsPad = 8;
+				const workTop = safeTop + 4;
+
+				for (const b of bubbles) {
+					b.ax = 0;
+					b.ay = 0;
+
+					const focusScale = hover === b ? 1.065 : 1;
+					const radiusTarget = b.targetR * focusScale;
+					b.r += (radiusTarget - b.r) * Math.min(1, dt * 7.5);
+					b.flash = Math.max(0, b.flash - dt * 1.8);
+					b.pressure = Math.max(0, b.pressure - dt * 2.5);
+
+					if (b === grabbed) {
+						const targetX = pointer.x + pointer.dragDX;
+						const targetY = pointer.y + pointer.dragDY;
+						const sizeT = clamp((b.r - FIELD.minRadius) / Math.max(1, FIELD.maxRadius - FIELD.minRadius), 0, 1);
+						const stiffness = lerp(46, 15, sizeT);
+						const damping = lerp(0.82, 0.9, sizeT);
+						b.ax += (targetX - b.x) * stiffness / Math.max(1, b.mass * 0.42);
+						b.ay += (targetY - b.y) * stiffness / Math.max(1, b.mass * 0.42);
+						b.vx *= damping;
+						b.vy *= damping;
+						b.pressure = Math.min(1, b.pressure + dt * 4);
+						applyPointerWake(b, dt);
+					} else {
+						const tx = b.tx + Math.sin(now * 0.35 + b.seed) * 9 * motionScale;
+						const ty = b.ty + Math.cos(now * 0.31 + b.seed * 0.8) * 9 * motionScale;
+						const targetPull = 0.42;
+						b.ax += (tx - b.x) * targetPull / Math.max(1, b.mass);
+						b.ay += (ty - b.y) * targetPull / Math.max(1, b.mass);
+
+						const drift = 5.5 * motionScale;
+						b.ax += Math.sin(now * 0.9 + b.seed * 1.7) * drift / Math.max(1, b.mass);
+						b.ay += Math.cos(now * 0.8 + b.seed * 1.1) * drift / Math.max(1, b.mass);
+					}
+
+					const dxp = b.x - pointer.x;
+					const dyp = b.y - pointer.y;
+					const dist = Math.hypot(dxp, dyp);
+					if (!pointer.down && dist < FIELD.mouseInfluence && dist > 1) {
+						const force = (1 - dist / FIELD.mouseInfluence) * 24 * motionScale;
+						b.ax += (dxp / dist) * force / Math.max(1, b.mass);
+						b.ay += (dyp / dist) * force / Math.max(1, b.mass);
+					}
+
+					b.vx += b.ax * dt * 60;
+					b.vy += b.ay * dt * 60;
+					b.vx *= FIELD.air;
+					b.vy *= FIELD.air;
+
+					const maxSpeed = 560 / Math.sqrt(Math.max(1, b.r / 28));
+					const speed = Math.hypot(b.vx, b.vy);
+					if (speed > maxSpeed) {
+						b.vx = b.vx / speed * maxSpeed;
+						b.vy = b.vy / speed * maxSpeed;
+					}
+
+					b.x += b.vx * dt;
+					b.y += b.vy * dt;
+				}
+
+				for (let pass = 0; pass < 3; pass++) {
+					rebuildGrid();
+					const checked = new Set();
+					for (const a of bubbles) {
+						for (const b of neighborsFor(a)) {
+							if (a === b) continue;
+							const key = a.index < b.index ? `${a.symbol}|${b.symbol}` : `${b.symbol}|${a.symbol}`;
+							if (checked.has(key)) continue;
+							checked.add(key);
+							resolveCollision(a, b, pass === 0);
+						}
+					}
+				}
+
+				for (const b of bubbles) {
+					if (b.x < b.r + boundsPad) {
+						b.x = b.r + boundsPad;
+						b.vx = Math.abs(b.vx) * FIELD.restitution;
+					}
+					if (b.x > width - b.r - boundsPad) {
+						b.x = width - b.r - boundsPad;
+						b.vx = -Math.abs(b.vx) * FIELD.restitution;
+					}
+					if (b.y < workTop + b.r) {
+						b.y = workTop + b.r;
+						b.vy = Math.abs(b.vy) * FIELD.restitution;
+					}
+					if (b.y > height - b.r - boundsPad) {
+						b.y = height - b.r - boundsPad;
+						b.vy = -Math.abs(b.vy) * FIELD.restitution;
+					}
+
+					b.history.push({ x: b.x, y: b.y });
+					if (b.history.length > 7) b.history.shift();
+				}
+			}
+
+			function applyPointerWake(source, dt) {
+				const sourceMomentum = clamp(source.mass / 140, 0.25, 2.6);
+				for (const b of bubbles) {
+					if (b === source) continue;
+					const dx = b.x - source.x;
+					const dy = b.y - source.y;
+					const dist = Math.hypot(dx, dy);
+					const reach = source.r + b.r + 120;
+					if (dist <= 1 || dist > reach) continue;
+					const nx = dx / dist;
+					const ny = dy / dist;
+					const front = Math.max(0, (pointer.vx * nx + pointer.vy * ny) / 850);
+					const falloff = Math.pow(1 - dist / reach, 1.8);
+					const force = falloff * (32 + front * 74) * sourceMomentum / Math.max(1, b.mass);
+					b.vx += nx * force * dt * 60;
+					b.vy += ny * force * dt * 60;
+					b.pressure = Math.min(1, b.pressure + falloff * 0.06);
+				}
+			}
+
+			function resolveCollision(a, b, allowFx) {
+				let dx = b.x - a.x;
+				let dy = b.y - a.y;
+				let dist = Math.hypot(dx, dy);
+				const minDist = a.r + b.r + 1.5;
+				if (dist >= minDist) return;
+
+				if (dist < 0.001) {
+					dx = Math.random() - 0.5;
+					dy = Math.random() - 0.5;
+					dist = Math.hypot(dx, dy) || 0.001;
+				}
+
+				const nx = dx / dist;
+				const ny = dy / dist;
+				const overlap = minDist - dist;
+				const invA = 1 / Math.max(1, a.mass * (a === grabbed ? 0.75 : 1));
+				const invB = 1 / Math.max(1, b.mass * (b === grabbed ? 0.75 : 1));
+				const invSum = invA + invB;
+				const percent = 0.78;
+				const slop = 0.2;
+				const correction = Math.max(0, overlap - slop) / invSum * percent;
+
+				a.x -= nx * correction * invA;
+				a.y -= ny * correction * invA;
+				b.x += nx * correction * invB;
+				b.y += ny * correction * invB;
+
+				const rvx = b.vx - a.vx;
+				const rvy = b.vy - a.vy;
+				const velAlongNormal = rvx * nx + rvy * ny;
+				if (velAlongNormal > 0) return;
+
+				const bounce = FIELD.restitution + Math.min(0.18, Math.abs(a.pchange - b.pchange) * 0.012);
+				const impulse = -(1 + bounce) * velAlongNormal / invSum;
+				const tangentX = -ny;
+				const tangentY = nx;
+				const tangentVel = rvx * tangentX + rvy * tangentY;
+				const frictionImpulse = clamp(-tangentVel / invSum, -impulse * 0.16, impulse * 0.16);
+
+				a.vx -= (impulse * nx + frictionImpulse * tangentX) * invA;
+				a.vy -= (impulse * ny + frictionImpulse * tangentY) * invA;
+				b.vx += (impulse * nx + frictionImpulse * tangentX) * invB;
+				b.vy += (impulse * ny + frictionImpulse * tangentY) * invB;
+				a.pressure = Math.min(1, a.pressure + overlap / Math.max(20, a.r));
+				b.pressure = Math.min(1, b.pressure + overlap / Math.max(20, b.r));
+
+				if (allowFx && Math.abs(velAlongNormal) > 125 && Math.random() > 0.78) {
+					const x = (a.x * b.r + b.x * a.r) / (a.r + b.r);
+					const y = (a.y * b.r + b.y * a.r) / (a.r + b.r);
+					addRipple(x, y, colorFor(Math.abs(a.pchange) > Math.abs(b.pchange) ? a.pchange : b.pchange, 0.8), clamp(Math.abs(velAlongNormal) / 260, 0.4, 1.8));
+				}
+			}
+
+			function updateParticles(dt) {
+				for (let i = ripples.length - 1; i >= 0; i--) {
+					const r = ripples[i];
+					r.r += dt * (110 + r.max * 0.65);
+					r.a *= Math.pow(0.018, dt);
+					if (r.r > r.max || r.a < 0.015) ripples.splice(i, 1);
+				}
+
+				for (let i = sparks.length - 1; i >= 0; i--) {
+					const s = sparks[i];
+					s.life -= dt;
+					s.x += s.vx * dt;
+					s.y += s.vy * dt;
+					s.vx *= Math.pow(0.08, dt);
+					s.vy *= Math.pow(0.08, dt);
+					if (s.life <= 0) sparks.splice(i, 1);
+				}
+			}
+
+			function drawBackground(now) {
+				const gradient = ctx.createLinearGradient(0, 0, width, height);
+				gradient.addColorStop(0, '#04060a');
+				gradient.addColorStop(0.48, '#070a10');
+				gradient.addColorStop(1, '#030406');
+				ctx.fillStyle = gradient;
+				ctx.fillRect(0, 0, width, height);
+
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				const g1 = ctx.createRadialGradient(width * 0.25, safeTop, 0, width * 0.25, safeTop, Math.max(width, height) * 0.9);
+				g1.addColorStop(0, 'rgba(52, 89, 104, 0.16)');
+				g1.addColorStop(0.45, 'rgba(52, 89, 104, 0.035)');
+				g1.addColorStop(1, 'rgba(52, 89, 104, 0)');
+				ctx.fillStyle = g1;
+				ctx.fillRect(0, 0, width, height);
+
+				const g2 = ctx.createRadialGradient(width * 0.78, height * 0.18, 0, width * 0.78, height * 0.18, width * 0.62);
+				g2.addColorStop(0, 'rgba(105, 79, 133, 0.12)');
+				g2.addColorStop(0.55, 'rgba(105, 79, 133, 0.02)');
+				g2.addColorStop(1, 'rgba(105, 79, 133, 0)');
+				ctx.fillStyle = g2;
+				ctx.fillRect(0, 0, width, height);
+				ctx.restore();
+
+				const workTop = safeTop + 4;
+				ctx.save();
+				ctx.strokeStyle = 'rgba(255,255,255,0.045)';
+				ctx.lineWidth = 1;
+				const gridGap = width < 700 ? 56 : 72;
+				const offset = (now * 8) % gridGap;
+				for (let x = -offset; x < width + gridGap; x += gridGap) {
+					ctx.beginPath();
+					ctx.moveTo(Math.round(x) + 0.5, workTop);
+					ctx.lineTo(Math.round(x) + 0.5, height);
+					ctx.stroke();
+				}
+				for (let y = workTop - offset; y < height + gridGap; y += gridGap) {
+					ctx.beginPath();
+					ctx.moveTo(0, Math.round(y) + 0.5);
+					ctx.lineTo(width, Math.round(y) + 0.5);
+					ctx.stroke();
+				}
+
+				ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+				ctx.beginPath();
+				ctx.moveTo(0, workTop + 0.5);
+				ctx.lineTo(width, workTop + 0.5);
+				ctx.stroke();
+				ctx.restore();
+
+			}
+
+			function drawRipplesAndSparks() {
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				for (const r of ripples) {
+					ctx.beginPath();
+					ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+					ctx.lineWidth = r.line;
+					ctx.strokeStyle = r.color.replace(/[\d.]+\)$/u, `${r.a})`);
+					ctx.stroke();
+				}
+
+				for (const s of sparks) {
+					const a = clamp(s.life / s.maxLife, 0, 1);
+					ctx.beginPath();
+					ctx.arc(s.x, s.y, s.size * a, 0, Math.PI * 2);
+					ctx.fillStyle = `${s.color}${Math.floor(a * 140).toString(16).padStart(2, '0')}`;
+					ctx.fill();
+				}
+				ctx.restore();
+			}
+
+			function drawBubbles() {
+				const ordered = [...bubbles].sort((a, b) => a.r - b.r);
+				for (const b of ordered) {
+					drawTrail(b);
+				}
+				const focusActive = Boolean(hover || grabbed);
+				for (const b of ordered) {
+					drawBubble(b, focusActive);
+				}
+			}
+
+			function drawTrail(b) {
+				if (b.history.length < 3) return;
+				const speed = Math.hypot(b.vx, b.vy);
+				if (speed < 28) return;
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				ctx.lineCap = 'round';
+				for (let i = 1; i < b.history.length; i++) {
+					const a = i / b.history.length;
+					const p0 = b.history[i - 1];
+					const p1 = b.history[i];
+					ctx.beginPath();
+					ctx.moveTo(p0.x, p0.y);
+					ctx.lineTo(p1.x, p1.y);
+					ctx.lineWidth = Math.max(1, b.r * 0.05) * a;
+					ctx.strokeStyle = colorFor(b.pchange, 0.018 * a * clamp(speed / 180, 0, 1));
+					ctx.stroke();
+				}
+				ctx.restore();
+			}
+
+			function drawBubble(b, focusActive) {
+				const x = b.x;
+				const y = b.y;
+				const r = b.r;
+				const magnitude = clamp(Math.abs(b.pchange) / FIELD.changeCap, 0, 1);
+				const hovered = hover === b;
+				const focused = hovered || b === grabbed;
+				const dim = focusActive && !focused ? 0.58 : 1;
+				const color = colorFor(b.pchange, 1);
+				const edgeAlpha = 0.34 + magnitude * 0.32 + b.flash * 0.24;
+				const innerAlpha = 0.05 + magnitude * 0.045;
+				const pressure = b.pressure;
+
+				ctx.save();
+				ctx.globalAlpha = dim;
+
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				ctx.beginPath();
+				ctx.arc(x, y, r + 7 + b.flash * 11 + pressure * 7, 0, Math.PI * 2);
+				const aura = ctx.createRadialGradient(x, y, r * 0.5, x, y, r + 24 + b.flash * 18);
+				aura.addColorStop(0, colorFor(b.pchange, 0.015 + magnitude * 0.025));
+				aura.addColorStop(0.62, colorFor(b.pchange, 0.05 + magnitude * 0.04));
+				aura.addColorStop(1, colorFor(b.pchange, 0));
+				ctx.fillStyle = aura;
+				ctx.fill();
+				ctx.restore();
+
+				ctx.save();
+				ctx.beginPath();
+				ctx.arc(x, y, r, 0, Math.PI * 2);
+				const body = ctx.createRadialGradient(x, y, r * 0.08, x, y, r);
+				body.addColorStop(0, `rgba(17, 24, 27, ${0.82 + magnitude * 0.04})`);
+				body.addColorStop(0.55, `rgba(12, 18, 20, ${0.84 + magnitude * 0.04})`);
+				body.addColorStop(0.86, colorFor(b.pchange, innerAlpha + pressure * 0.03));
+				body.addColorStop(1, colorFor(b.pchange, 0.16 + magnitude * 0.12));
+				ctx.fillStyle = body;
+				ctx.fill();
+				ctx.restore();
+
+				ctx.save();
+				ctx.beginPath();
+				ctx.arc(x, y, r - 1.2, 0, Math.PI * 2);
+				ctx.lineWidth = focused ? 2.8 : 1.35 + magnitude * 1.35;
+				ctx.strokeStyle = colorFor(b.pchange, edgeAlpha);
+				ctx.shadowColor = colorFor(b.pchange, 0.45);
+				ctx.shadowBlur = focused ? 22 : 8 + magnitude * 11 + b.flash * 18;
+				ctx.stroke();
+
+				ctx.beginPath();
+				ctx.arc(x, y, r + 2.8, -Math.PI * 0.88, Math.PI * 0.14);
+				ctx.lineWidth = 0.8 + magnitude * 0.55;
+				ctx.strokeStyle = `rgba(236, 241, 247, ${0.08 + magnitude * 0.045})`;
+				ctx.shadowBlur = 0;
+				ctx.stroke();
+				ctx.restore();
+
+				if (focused) {
+					ctx.save();
+					ctx.globalCompositeOperation = 'screen';
+					ctx.beginPath();
+					ctx.arc(x, y, r + 7, 0, Math.PI * 2);
+					ctx.lineWidth = 1.1;
+					ctx.strokeStyle = 'rgba(238, 243, 248, 0.28)';
+					ctx.setLineDash([5, 7]);
+					ctx.lineDashOffset = -performance.now() * 0.018;
+					ctx.stroke();
+					ctx.restore();
+				}
+
+				drawBubbleText(b, hovered);
+				ctx.restore();
+			}
+
+			function drawBubbleText(b, emphasized) {
+				const r = b.r;
+				if (r < 19) return;
+				const x = b.x;
+				const y = b.y;
+				const label = shortName(b);
+				const symbolSize = clamp(r * 0.27, 9, 18);
+				const pctSize = clamp(r * 0.25, 9, 17);
+				const sectorSize = clamp(r * 0.14, 7, 10);
+
+				ctx.save();
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'middle';
+				ctx.shadowColor = 'rgba(0,0,0,0.65)';
+				ctx.shadowBlur = 8;
+				ctx.fillStyle = emphasized ? 'rgba(250, 252, 255, 0.98)' : 'rgba(232, 237, 243, 0.9)';
+				ctx.font = `760 ${symbolSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
+				ctx.fillText(fitText(label, r * 1.5, symbolSize), x, y - pctSize * 0.55);
+
+				ctx.fillStyle = colorFor(b.pchange, emphasized ? 0.98 : 0.88);
+				ctx.font = `750 ${pctSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
+				ctx.fillText(signed(b.pchange), x, y + symbolSize * 0.68);
+
+				if (r > 50) {
+					ctx.fillStyle = sectorColor(b.sector, 0.7);
+					ctx.font = `700 ${sectorSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
+					ctx.fillText(b.sector.toUpperCase(), x, y + symbolSize * 1.68);
+				}
+				ctx.restore();
+			}
+
+			function shortName(b) {
+				if (b.r < 34) return b.symbol.replace('-AUTO', '');
+				return b.name || b.symbol;
+			}
+
+			function fitText(text, maxWidth, fontSize) {
+				let out = text;
+				ctx.font = `760 ${fontSize}px Inter, ui-sans-serif, system-ui, sans-serif`;
+				while (out.length > 2 && ctx.measureText(out).width > maxWidth) {
+					out = out.slice(0, -1);
+				}
+				if (out !== text && out.length > 2) out = out.slice(0, -1) + '.';
+				return out;
+			}
+
+			function drawPointerField() {
+				if (pointer.x < 0 || pointer.y < 0) return;
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				const radius = pointer.down ? 128 : 72;
+				const g = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, radius);
+				g.addColorStop(0, 'rgba(255,255,255,0.055)');
+				g.addColorStop(0.42, 'rgba(125,184,204,0.04)');
+				g.addColorStop(1, 'rgba(125,184,204,0)');
+				ctx.fillStyle = g;
+				ctx.beginPath();
+				ctx.arc(pointer.x, pointer.y, radius, 0, Math.PI * 2);
+				ctx.fill();
+				ctx.restore();
+			}
+
+			function render(now) {
+				drawBackground(now * 0.001);
+				drawRipplesAndSparks();
+				drawBubbles();
+				drawPointerField();
+			}
+
+			function frame(now) {
+				const dt = Math.min(0.033, Math.max(0.001, (now - lastFrame) / 1000));
+				lastFrame = now;
+
+				pointer.vx = (pointer.x - pointer.px) / dt;
+				pointer.vy = (pointer.y - pointer.py) / dt;
+				pointer.px = pointer.x;
+				pointer.py = pointer.y;
+
+				integrate(dt);
+				updateParticles(dt);
+				render(now);
+				updateLens();
+				frameId = requestAnimationFrame(frame);
+			}
+
+			function hitTest(x, y) {
+				let best = null;
+				let bestScore = Infinity;
+				for (let i = bubbles.length - 1; i >= 0; i--) {
+					const b = bubbles[i];
+					const dx = x - b.x;
+					const dy = y - b.y;
+					const dist = Math.hypot(dx, dy);
+					if (dist <= b.r + 4) {
+						const score = dist - b.r * 0.25;
+						if (score < bestScore) {
+							best = b;
+							bestScore = score;
+						}
+					}
+				}
+				return best;
+			}
+
+			function onPointerDown(event) {
+				const p = pointerFromEvent(event);
+				pointer.down = true;
+				pointer.id = event.pointerId;
+				pointer.pressT = performance.now();
+				pointer.x = p.x;
+				pointer.y = p.y;
+				pointer.px = p.x;
+				pointer.py = p.y;
+				const hit = hitTest(p.x, p.y);
+				if (hit) {
+					grabbed = hit;
+					pointer.dragDX = hit.x - p.x;
+					pointer.dragDY = hit.y - p.y;
+					hit.selected = true;
+					hit.flash = Math.min(1, hit.flash + 0.42);
+					canvas.classList.add('dragging');
+					canvas.setPointerCapture(event.pointerId);
+					addRipple(hit.x, hit.y, colorFor(hit.pchange, 0.8), 0.8);
+				} else {
+					addRipple(p.x, p.y, 'rgba(170, 205, 226, 0.72)', 1.1);
+					for (const b of bubbles) {
+						const dx = b.x - p.x;
+						const dy = b.y - p.y;
+						const dist = Math.hypot(dx, dy);
+						if (dist < 260 && dist > 1) {
+							const f = Math.pow(1 - dist / 260, 2) * 120 / Math.max(1, b.mass);
+							b.vx += dx / dist * f;
+							b.vy += dy / dist * f;
+							b.pressure = Math.min(1, b.pressure + f * 0.02);
+						}
+					}
+				}
+				event.preventDefault();
+			}
+
+			function onPointerMove(event) {
+				const p = pointerFromEvent(event);
+				pointer.x = p.x;
+				pointer.y = p.y;
+				hover = grabbed || hitTest(p.x, p.y);
+				canvas.classList.toggle('hovering', Boolean(hover));
+			}
+
+			function onPointerUp(event) {
+				const p = pointerFromEvent(event);
+				pointer.x = p.x;
+				pointer.y = p.y;
+				pointer.down = false;
+				if (grabbed) {
+					grabbed.selected = false;
+					grabbed.vx += clamp(pointer.vx * 0.045, -70, 70);
+					grabbed.vy += clamp(pointer.vy * 0.045, -70, 70);
+					addRipple(grabbed.x, grabbed.y, colorFor(grabbed.pchange, 0.8), 1);
+					addSpark(grabbed.x, grabbed.y, grabbed.pchange, 9);
+					grabbed = null;
+				}
+				canvas.classList.remove('dragging');
+				try {
+					canvas.releasePointerCapture(event.pointerId);
+				} catch {}
+			}
+
+			function pointerFromEvent(event) {
+				const rect = canvas.getBoundingClientRect();
+				return {
+					x: event.clientX - rect.left,
+					y: event.clientY - rect.top,
+				};
+			}
+
+			function updateLens() {
+				if (!hover) {
+					lens.hidden = true;
+					return;
+				}
+
+				lens.hidden = false;
+				const b = hover;
+				const changeText = `${b.change >= 0 ? '+' : ''}${priceFormatter.format(b.change)} (${signed(b.pchange)})`;
+				lensSymbol.textContent = b.symbol;
+				lensChange.textContent = changeText;
+				lensChange.className = b.pchange >= 0 ? 'lens-positive' : 'lens-negative';
+				lensName.textContent = `${b.name} / ${b.sector}`;
+				lensPrice.textContent = `INR ${priceFormatter.format(b.lastPrice)}`;
+				lensRange.textContent = `${priceFormatter.format(b.low)} - ${priceFormatter.format(b.high)}`;
+				lensVolume.textContent = compactFormatter.format(b.volume || 0);
+
+				const preferredX = clamp(b.x + b.r + 18, 12, width - lens.offsetWidth - 12);
+				const preferredY = clamp(b.y - lens.offsetHeight * 0.52, safeTop + 8, height - lens.offsetHeight - 12);
+				lens.style.transform = `translate3d(${preferredX}px, ${preferredY}px, 0)`;
+			}
+
+			function mutateDemo() {
+				if (dataSource === 'live' && Date.now() - lastRealMessageAt < 18000) return;
+				dataSource = socketTried ? 'stale' : 'demo';
+				const phase = Date.now() * 0.00008;
+				demoRows = demoRows.map((row, index) => {
+					const pulse = Math.sin(phase + index * 0.71) * 0.042 + (Math.random() - 0.5) * 0.055;
+					const nextPct = clamp(row.pchange + pulse, -5.8, 5.8);
+					const nextPrice = Math.max(1, row.lastPrice * (1 + (nextPct - row.pchange) / 100));
+					const change = nextPrice * nextPct / 100;
+					return {
+						...row,
+						lastPrice: nextPrice,
+						pchange: nextPct,
+						change,
+						high: Math.max(row.high, nextPrice * (1 + Math.abs(nextPct) / 180 + 0.003)),
+						low: Math.min(row.low, nextPrice * (1 - Math.abs(nextPct) / 190 - 0.003)),
+						volume: row.volume * (0.985 + Math.random() * 0.03),
+						tradedVolume: row.volume * (0.985 + Math.random() * 0.03),
+					};
+				});
+				applyRows(demoRows, dataSource);
+				clock.textContent = timeFormatter.format(new Date());
+			}
+
+			function connectSocket() {
+				if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+				socketTried = true;
+				setFeed('connecting', 'Connecting');
+				try {
+					const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+					socket = new WebSocket(`${protocol}//${window.location.host}/api/stocks/ws`);
+				} catch {
+					setFeed('demo', 'Demo');
+					return;
+				}
+
+				socket.addEventListener('open', () => {
+					setFeed('connecting', 'Syncing');
+				});
+
+				socket.addEventListener('message', (event) => {
+					let message;
+					try {
+						message = JSON.parse(event.data);
+					} catch {
+						return;
+					}
+					if (message.type === 'error') {
+						dataSource = 'stale';
+						setFeed('stale', 'Stale');
+						showToast(message.message || 'Market feed unavailable.');
+						return;
+					}
+					if (!Array.isArray(message.stocks)) return;
+					dataSource = message.stale ? 'stale' : 'live';
+					lastRealMessageAt = Date.now();
+					const rows = message.stocks.map((row) => ({
+						...row,
+						name: NAME_BY_SYMBOL.get(row.symbol) || row.symbol,
+						sector: SECTOR_BY_SYMBOL.get(row.symbol) || 'Other',
+					}));
+					applyRows(rows, dataSource, message.warning || '');
+					clock.textContent = timeFormatter.format(new Date(message.updatedAt || Date.now()));
+				});
+
+				socket.addEventListener('close', () => {
+					if (dataSource !== 'live') setFeed('demo', 'Demo');
+					window.clearTimeout(reconnectTimer);
+					reconnectTimer = window.setTimeout(connectSocket, 2500);
+				});
+
+				socket.addEventListener('error', () => {
+					try {
+						socket.close();
+					} catch {}
+				});
+			}
+
+			function bindEvents() {
+				canvas.addEventListener('pointerdown', onPointerDown);
+				canvas.addEventListener('pointermove', onPointerMove);
+				canvas.addEventListener('pointerup', onPointerUp);
+				canvas.addEventListener('pointercancel', onPointerUp);
+				canvas.addEventListener('pointerleave', () => {
+					if (!pointer.down) {
+						pointer.x = -1000;
+						pointer.y = -1000;
+						hover = null;
+						canvas.classList.remove('hovering');
+					}
+				});
+
+				window.addEventListener('resize', resize, { passive: true });
+
+				window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', (event) => {
+					reducedMotion = event.matches;
+				});
+			}
+
+			function boot() {
+				bindEvents();
+				resize();
+				applyRows(demoRows, 'demo');
+				clock.textContent = timeFormatter.format(new Date());
+				connectSocket();
+				window.setInterval(mutateDemo, 2600);
+				frameId = requestAnimationFrame(frame);
+				window.__codexStockBubbles = {
+					get stats() {
+					return {
+						count: bubbles.length,
+						width,
+						height,
+						source: dataSource,
+						hover: hover && hover.symbol,
+						frameId,
+						};
+					},
+					sampleCanvas() {
+						const sample = ctx.getImageData(Math.floor(width * 0.5), Math.floor(height * 0.5), 1, 1).data;
+						return Array.from(sample);
+					},
+					bubbleSnapshot() {
+						return bubbles.slice(0, 8).map((b) => ({
+							symbol: b.symbol,
+							x: Math.round(b.x),
+							y: Math.round(b.y),
+							r: Math.round(b.r),
+							pchange: Number(b.pchange.toFixed(2)),
+						}));
+					},
+				};
+			}
+
+			boot();
+		</script>
+	</body>
+</html>
+
+<style is:global>
+	:root {
+		color-scheme: dark;
+		font-family:
+			Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+			sans-serif;
+		background: #030406;
 	}
 
-	function formatTime(value: string): string {
-		return timeFmt.format(new Date(value));
+	* {
+		box-sizing: border-box;
 	}
 
-	function escapeHtml(value: string): string {
-		return value.replace(/[&<>"']/g, (c) =>
-			({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
-		);
+	html,
+	body {
+		margin: 0;
+		width: 100%;
+		min-width: 320px;
+		height: 100%;
+		overflow: hidden;
+		background: #030406;
+		color: #edf2f7;
+		-webkit-font-smoothing: antialiased;
+		text-rendering: geometricPrecision;
+		overscroll-behavior: none;
 	}
 
-	// ---- boot ----------------------------------------------------------------
-	resize();
-	window.addEventListener('resize', resize);
-	requestAnimationFrame(frame);
-	connect();
-</script>
+	button,
+	input,
+	select,
+	textarea {
+		font: inherit;
+	}
 
-<style>
-	.stage {
+	.terminal {
 		position: fixed;
 		inset: 0;
+		isolation: isolate;
 		overflow: hidden;
-		background:
-			radial-gradient(120% 90% at 50% -10%, #121a2b 0%, #0a0e17 45%, #06080d 100%);
+		background: #030406;
 	}
 
-	#scene {
+	#marketCanvas {
 		position: absolute;
 		inset: 0;
+		z-index: 0;
 		display: block;
+		width: 100vw;
+		height: 100vh;
+		cursor: default;
 		touch-action: none;
+	}
+
+	#marketCanvas.hovering {
+		cursor: grab;
+	}
+
+	#marketCanvas.dragging {
+		cursor: grabbing;
 	}
 
 	.hud {
@@ -519,147 +1386,354 @@ import Layout from '../layouts/Layout.astro';
 		right: 0;
 		z-index: 5;
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
+		justify-content: space-between;
 		gap: 24px;
-		padding: 14px 22px;
-		background: linear-gradient(180deg, rgba(6, 8, 13, 0.85) 0%, rgba(6, 8, 13, 0) 100%);
-		backdrop-filter: blur(6px);
-		-webkit-backdrop-filter: blur(6px);
+		padding: 16px 24px 18px;
+		background: linear-gradient(180deg, rgba(4, 6, 10, 0.82) 0%, rgba(4, 6, 10, 0.35) 60%, rgba(4, 6, 10, 0) 100%);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 		pointer-events: none;
 	}
 
-	.brand {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
+	.identity,
+	.stats {
+		pointer-events: auto;
 	}
 
-	.brand h1 {
+	.identity {
+		min-width: 0;
+	}
+
+	h1 {
 		margin: 0;
-		font-size: 1.05rem;
-		font-weight: 800;
-		letter-spacing: 0.06em;
-		color: #f4f7fb;
+		color: #f7fbff;
+		font-size: 1.32rem;
+		font-weight: 880;
+		line-height: 1;
+		letter-spacing: 0.01em;
 	}
 
-	.tag {
-		font-size: 0.68rem;
-		font-weight: 500;
-		letter-spacing: 0.02em;
-		color: #7b8696;
-	}
-
-	.metrics {
+	.stats {
 		display: flex;
 		align-items: center;
-		gap: 28px;
-		margin-left: 8px;
+		gap: 20px;
+		flex-wrap: wrap;
+		justify-content: flex-end;
 	}
 
-	.metric {
+	.divider {
+		width: 1px;
+		height: 26px;
+		background: rgba(255, 255, 255, 0.08);
+	}
+
+	.stat {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
+		align-items: flex-end;
+		gap: 3px;
 	}
 
-	.metric .label {
-		font-size: 0.62rem;
-		font-weight: 600;
+	.stat label {
+		color: #687388;
+		font-size: 0.56rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: #6b7587;
 	}
 
-	.metric strong {
-		font-size: 1.15rem;
+	.stat b {
+		color: #e8eef6;
+		font-size: 1.16rem;
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
-		line-height: 1.1;
+		line-height: 1;
 	}
 
-	.metric.up strong { color: #34d77f; }
-	.metric.down strong { color: #ff5c6c; }
-	.metric .muted {
-		font-size: 0.92rem;
-		font-weight: 600;
-		color: #aeb8c6;
+	.up-value {
+		color: #4be39a !important;
 	}
 
-	.status {
-		margin-left: auto;
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		padding: 6px 12px;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.07);
-		font-size: 0.74rem;
-		font-weight: 600;
-		color: #aeb8c6;
+	.down-value {
+		color: #ff6470 !important;
 	}
 
-	.dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: #d6a015;
-		animation: pulse 2s infinite;
-	}
-
-	.status[data-status='connected'] { color: #34d77f; }
-	.status[data-status='connected'] .dot { background: #34d77f; }
-	.status[data-status='stale'] { color: #e0b53a; }
-	.status[data-status='stale'] .dot { background: #e0b53a; }
-	.status[data-status='error'] { color: #ff5c6c; }
-	.status[data-status='error'] .dot { background: #ff5c6c; animation: none; }
-
-	@keyframes pulse {
-		0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
-		70% { box-shadow: 0 0 0 5px transparent; opacity: 0.7; }
-		100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
-	}
-
-	.warning {
-		position: absolute;
-		bottom: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 5;
-		max-width: 90vw;
-		padding: 8px 16px;
-		border-radius: 999px;
-		background: rgba(224, 181, 58, 0.12);
-		border: 1px solid rgba(224, 181, 58, 0.3);
-		color: #e8c766;
-		font-size: 0.76rem;
-		text-align: center;
-	}
-
-	.tooltip {
-		position: fixed;
-		z-index: 10;
-		transform: translate(-50%, calc(-100% - 16px));
+	.leaders {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
-		padding: 8px 12px;
-		border-radius: 10px;
-		background: rgba(14, 18, 28, 0.95);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-		pointer-events: none;
+		gap: 6px;
+	}
+
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		padding: 4px 9px;
+		border: 1px solid rgba(255, 255, 255, 0.07);
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.035);
+		font-size: 0.7rem;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
 	}
 
-	.tooltip strong { font-size: 0.82rem; color: #f4f7fb; }
-	.tooltip span { font-size: 0.74rem; color: #aeb8c6; font-variant-numeric: tabular-nums; }
-	.tooltip .pos { color: #34d77f; }
-	.tooltip .neg { color: #ff5c6c; }
+	.chip .arrow {
+		font-size: 0.62rem;
+	}
 
-	@media (max-width: 640px) {
-		.hud { gap: 14px; padding: 12px 14px; flex-wrap: wrap; }
-		.metrics { gap: 16px; width: 100%; order: 3; }
-		.status { margin-left: auto; }
+	.chip .sym {
+		color: #cdd6e3;
+	}
+
+	.chip.up .arrow,
+	.chip.up .pct {
+		color: #4be39a;
+	}
+
+	.chip.down .arrow,
+	.chip.down .pct {
+		color: #ff6470;
+	}
+
+	.status {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 7px 13px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.04);
+		color: #aeb8c6;
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.status .dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: #e0b53a;
+		box-shadow: 0 0 10px currentColor;
+		animation: blink 1.8s ease-in-out infinite;
+	}
+
+	.status .clock {
+		color: #6f7c90;
+		font-size: 0.68rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	@keyframes blink {
+		0%,
+		100% { opacity: 1; }
+		50% { opacity: 0.35; }
+	}
+
+	.status[data-status='connected'],
+	.status[data-status='live'] {
+		color: #4be39a;
+	}
+
+	.status[data-status='connected'] .dot,
+	.status[data-status='live'] .dot {
+		background: #4be39a;
+	}
+
+	.status[data-status='demo'] {
+		color: #84c5ff;
+	}
+
+	.status[data-status='demo'] .dot {
+		background: #84c5ff;
+	}
+
+	.status[data-status='stale'],
+	.status[data-status='connecting'] {
+		color: #e0b53a;
+	}
+
+	.status[data-status='stale'] .dot,
+	.status[data-status='connecting'] .dot {
+		background: #e0b53a;
+	}
+
+	.breadth {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		left: 0;
+		height: 2px;
+		overflow: hidden;
+		background: rgba(255, 96, 112, 0.5);
+	}
+
+	.breadth i {
+		display: block;
+		width: 50%;
+		height: 100%;
+		background: linear-gradient(90deg, rgba(75, 227, 154, 0.5), #4be39a);
+		box-shadow: 0 0 10px rgba(75, 227, 154, 0.6);
+		transition: width 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	.lens {
+		position: fixed;
+		top: 0;
+		left: 0;
+		z-index: 5;
+		width: min(280px, calc(100vw - 24px));
+		padding: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.11);
+		border-radius: 8px;
+		background:
+			linear-gradient(180deg, rgba(20, 25, 31, 0.92), rgba(12, 15, 19, 0.88));
+		box-shadow:
+			0 22px 60px rgba(0, 0, 0, 0.46),
+			inset 0 1px 0 rgba(255, 255, 255, 0.07);
+		backdrop-filter: blur(18px);
+		-webkit-backdrop-filter: blur(18px);
+		pointer-events: none;
+	}
+
+	.lens-top {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.lens-top span {
+		overflow: hidden;
+		color: #f7fbff;
+		font-size: 1.08rem;
+		font-weight: 860;
+		line-height: 1.1;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.lens-top strong {
+		font-size: 0.85rem;
+		font-weight: 820;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+
+	.lens-positive {
+		color: #5cd79f;
+	}
+
+	.lens-negative {
+		color: #ee6f77;
+	}
+
+	.lens-name {
+		margin-top: 4px;
+		overflow: hidden;
+		color: rgba(184, 196, 210, 0.77);
+		font-size: 0.75rem;
+		font-weight: 650;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.lens-grid {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 7px 12px;
+		margin-top: 12px;
+		padding-top: 11px;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.lens-grid span,
+	.lens-grid strong {
+		font-size: 0.74rem;
+		font-variant-numeric: tabular-nums;
+		line-height: 1.2;
+	}
+
+	.lens-grid span {
+		color: rgba(159, 172, 190, 0.72);
+		font-weight: 680;
+	}
+
+	.lens-grid strong {
+		overflow: hidden;
+		color: rgba(240, 245, 250, 0.93);
+		font-weight: 760;
+		text-align: right;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.toast {
+		position: fixed;
+		right: 16px;
+		bottom: 16px;
+		z-index: 6;
+		max-width: min(460px, calc(100vw - 32px));
+		padding: 10px 13px;
+		border: 1px solid rgba(240, 189, 95, 0.24);
+		border-radius: 8px;
+		background: rgba(32, 25, 14, 0.82);
+		box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+		color: #f0d395;
+		font-size: 0.78rem;
+		font-weight: 700;
+		backdrop-filter: blur(14px);
+		-webkit-backdrop-filter: blur(14px);
+	}
+
+	@media (max-width: 760px) {
+		.hud {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 12px;
+			padding: 12px 14px 16px;
+		}
+
+		.stats {
+			gap: 12px;
+			justify-content: space-between;
+		}
+
+		.divider {
+			display: none;
+		}
+
+		.stat {
+			gap: 2px;
+			align-items: flex-start;
+		}
+
+		.stat label {
+			font-size: 0.52rem;
+		}
+
+		.stat b {
+			font-size: 0.86rem;
+		}
+
+		.leaders {
+			flex-direction: row;
+			order: 2;
+			width: 100%;
+		}
+
+		.status {
+			font-size: 0.82rem;
+			order: 3;
+		}
+
+		h1 {
+			font-size: 1.1rem;
+		}
+
+		.lens {
+			display: none;
+		}
 	}
 </style>
