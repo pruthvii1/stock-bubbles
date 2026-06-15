@@ -332,6 +332,47 @@ export default {
 			return env.STOCK_ROOM.get(id).fetch(request);
 		}
 
+		if (url.pathname === BASE_PATH) {
+			url.pathname = `${BASE_PATH}/`;
+			return Response.redirect(url, 308);
+		}
+
+		if (url.pathname.startsWith(`${BASE_PATH}/`)) {
+			const rewrittenUrl = new URL(request.url);
+			rewrittenUrl.pathname = url.pathname.slice(BASE_PATH.length) || '/';
+
+			const rewrittenRequest = new Request(rewrittenUrl, request);
+			const response = await astroWorker.fetch(rewrittenRequest, env, ctx);
+
+			if (isHtmlResponse(response)) {
+				return prefixRootAssetUrls(response);
+			}
+
+			return response;
+		}
+
 		return astroWorker.fetch(request, env, ctx);
 	},
 };
+
+function isHtmlResponse(response: Response): boolean {
+	return response.headers.get('content-type')?.includes('text/html') ?? false;
+}
+
+async function prefixRootAssetUrls(response: Response): Promise<Response> {
+	const html = await response.text();
+	const headers = new Headers(response.headers);
+	headers.delete('content-length');
+
+	return new Response(
+		html
+			.replaceAll('href="/favicon.svg"', `href="${BASE_PATH}/favicon.svg"`)
+			.replaceAll('href="/_astro/', `href="${BASE_PATH}/_astro/`)
+			.replaceAll('src="/_astro/', `src="${BASE_PATH}/_astro/`),
+		{
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		},
+	);
+}
