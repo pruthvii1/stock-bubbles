@@ -2,6 +2,7 @@ import astroWorker from '@astrojs/cloudflare/entrypoints/server';
 
 const ROOM_NAME = 'nifty50';
 const WS_PATH = '/api/stocks/ws';
+const BASE_PATH = '/stocks';
 const NSE_HOME_URL = 'https://www.nseindia.com/';
 const NSE_URL =
 	'https://www.nseindia.com/api/NextApi/apiClient/indexTrackerApi?functionName=getIndicesHeatMap&&index=NIFTY%2050';
@@ -322,7 +323,7 @@ export default {
 	async fetch(request: Request, env: AppEnv, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
-		if (url.pathname === WS_PATH) {
+		if (url.pathname === WS_PATH || url.pathname === `${BASE_PATH}${WS_PATH}`) {
 			if (!env.STOCK_ROOM) {
 				return new Response('STOCK_ROOM Durable Object binding is missing.', { status: 500 });
 			}
